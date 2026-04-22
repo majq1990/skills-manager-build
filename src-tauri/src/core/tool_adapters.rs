@@ -130,8 +130,20 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
         ToolAdapter {
             key: "opencode".into(),
             display_name: "OpenCode".into(),
+            // On Windows opencode reads %APPDATA%\opencode\skills (Roaming).
+            // The Unix-style `.config/opencode/skills` is kept as a scan dir
+            // so previously-deployed skills there still surface in discovery.
+            #[cfg(target_os = "windows")]
+            relative_skills_dir: "AppData/Roaming/opencode/skills".into(),
+            #[cfg(not(target_os = "windows"))]
             relative_skills_dir: ".config/opencode/skills".into(),
+            #[cfg(target_os = "windows")]
+            relative_detect_dir: "AppData/Roaming/opencode".into(),
+            #[cfg(not(target_os = "windows"))]
             relative_detect_dir: ".config/opencode".into(),
+            #[cfg(target_os = "windows")]
+            additional_scan_dirs: vec![".config/opencode/skills".into()],
+            #[cfg(not(target_os = "windows"))]
             additional_scan_dirs: vec![],
             override_skills_dir: None,
             is_custom: false,
