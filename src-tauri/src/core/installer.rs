@@ -56,12 +56,26 @@ impl PreparedSource {
             }
         }
 
+        found.sort();
         found.dedup();
 
+        let root = temp_dir.path();
         let skill_dir = match found.len() {
-            0 => temp_dir.path().to_path_buf(),
+            0 => root.to_path_buf(),
             1 => found.into_iter().next().unwrap(),
-            _ => bail!("Multiple skill directories found in archive"),
+            _ => {
+                // Pick the shallowest SKILL.md location (zip root has priority);
+                // break ties by preferring the highest-sorting dir name
+                // (semver-ish: "1.0.1" > "1.0.0").
+                found.sort_by(|a, b| {
+                    let da = a.strip_prefix(root).map(|p| p.components().count()).unwrap_or(usize::MAX);
+                    let db = b.strip_prefix(root).map(|p| p.components().count()).unwrap_or(usize::MAX);
+                    da.cmp(&db).then_with(|| b.file_name().cmp(&a.file_name()))
+                });
+                let chosen = found.into_iter().next().unwrap();
+                log::info!("installer: multiple SKILL.md in archive, picked {:?}", chosen);
+                chosen
+            }
         };
 
         Ok(PreparedSource::Archive {
