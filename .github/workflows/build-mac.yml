@@ -21,10 +21,13 @@ jobs:
           - os: macos-14
             target: aarch64-apple-darwin
             name: macos-arm64
-          - os: macos-13
+          # Cross-compile Intel binary on arm64 runner (macos-13 queue too long)
+          - os: macos-14
             target: x86_64-apple-darwin
             name: macos-x64
     runs-on: ${{ matrix.os }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "10.15"
 
     steps:
       - name: Checkout
