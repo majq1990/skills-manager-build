@@ -302,8 +302,9 @@ pub async fn enterprise_install_skill(
             }
         }
 
-        // Attach the newly installed skill to the currently active scenario so it
-        // shows up under "当前场景已启用" in My Skills without needing manual toggle.
+        // Attach the newly installed skill to the currently active scenario and
+        // sync it to every enabled agent tool, so it shows up under "当前场景已
+        // 启用" in My Skills and inside tool folders (e.g. ~/.claude/skills) right away.
         if let Some(scenario_id) = active_scenario_id.as_deref() {
             if let Err(e) = store_for_install.add_skill_to_scenario(scenario_id, &skill_id) {
                 log::warn!(
@@ -315,6 +316,16 @@ pub async fn enterprise_install_skill(
                     "[enterprise_install_skill] Added skill {} to active scenario {}",
                     skill_id, scenario_id
                 );
+                if let Err(e) = crate::commands::scenarios::sync_skill_to_scenario_active_tools(
+                    &store_for_install,
+                    scenario_id,
+                    &skill_id,
+                ) {
+                    log::warn!(
+                        "[enterprise_install_skill] sync_skill_to_scenario_active_tools failed for {}: {}",
+                        skill_id, e
+                    );
+                }
             }
         }
 

@@ -888,6 +888,11 @@ pub(crate) fn store_installed_skill(
             store
                 .add_skill_to_scenario(scenario_id, &existing.id)
                 .map_err(AppError::db)?;
+            crate::commands::scenarios::sync_skill_to_scenario_active_tools(
+                store,
+                scenario_id,
+                &existing.id,
+            )?;
         }
 
         return Ok(existing.id);
@@ -923,6 +928,7 @@ pub(crate) fn store_installed_skill(
         store
             .add_skill_to_scenario(scenario_id, &id)
             .map_err(AppError::db)?;
+        crate::commands::scenarios::sync_skill_to_scenario_active_tools(store, scenario_id, &id)?;
     }
 
     Ok(id)

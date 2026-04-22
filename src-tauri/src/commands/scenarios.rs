@@ -51,6 +51,62 @@ pub(crate) fn enabled_installed_adapters_for_scenario_skill(
         .collect())
 }
 
+/// Sync a skill's central-repo content to every enabled tool for `scenario_id`,
+/// recording results into `skill_targets`. No-op when the scenario is not the
+/// active one, or when the skill has been removed. Used by install/import
+/// flows so a freshly added skill appears in agent tool folders right away.
+pub(crate) fn sync_skill_to_scenario_active_tools(
+    store: &SkillStore,
+    scenario_id: &str,
+    skill_id: &str,
+) -> Result<(), AppError> {
+    let active_id = match store.get_active_scenario_id().map_err(AppError::db)? {
+        Some(v) => v,
+        None => return Ok(()),
+    };
+    if active_id != scenario_id {
+        return Ok(());
+    }
+    let skill = match store.get_skill_by_id(skill_id).map_err(AppError::db)? {
+        Some(s) => s,
+        None => return Ok(()),
+    };
+
+    let adapters = enabled_installed_adapters_for_scenario_skill(store, scenario_id, skill_id)?;
+    let configured_mode = store.get_setting("sync_mode").map_err(AppError::db)?;
+    let source = PathBuf::from(&skill.central_path);
+
+    for adapter in &adapters {
+        let target = adapter.skills_dir().join(&skill.name);
+        let mode = sync_engine::sync_mode_for_tool(&adapter.key, configured_mode.as_deref());
+        match sync_engine::sync_skill(&source, &target, mode) {
+            Ok(_actual_mode) => {
+                let now = chrono::Utc::now().timestamp_millis();
+                let target_record = crate::core::skill_store::SkillTargetRecord {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    skill_id: skill_id.to_string(),
+                    tool: adapter.key.clone(),
+                    target_path: target.to_string_lossy().to_string(),
+                    mode: mode.as_str().to_string(),
+                    status: "ok".to_string(),
+                    synced_at: Some(now),
+                    last_error: None,
+                };
+                if let Err(e) = store.insert_target(&target_record) {
+                    log::warn!("Failed to insert sync target for skill {skill_id}: {e}");
+                }
+            }
+            Err(e) => {
+                log::warn!(
+                    "Failed to sync skill {skill_id} to {}: {e}",
+                    target.display()
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Serialize)]
 pub struct ScenarioDto {
     pub id: String,
@@ -272,52 +328,7 @@ pub async fn add_skill_to_scenario(
         store
             .add_skill_to_scenario(&scenario_id, &skill_id)
             .map_err(AppError::db)?;
-
-        // If this is the active scenario, sync the skill
-        if let Ok(Some(active_id)) = store.get_active_scenario_id() {
-            if active_id == scenario_id {
-                let adapters =
-                    enabled_installed_adapters_for_scenario_skill(&store, &scenario_id, &skill_id)?;
-                let configured_mode = store.get_setting("sync_mode").map_err(AppError::db)?;
-                if let Ok(Some(skill)) = store.get_skill_by_id(&skill_id) {
-                    let source = PathBuf::from(&skill.central_path);
-                    for adapter in &adapters {
-                        let target = adapter.skills_dir().join(&skill.name);
-                        let mode = sync_engine::sync_mode_for_tool(
-                            &adapter.key,
-                            configured_mode.as_deref(),
-                        );
-                        match sync_engine::sync_skill(&source, &target, mode) {
-                            Ok(_actual_mode) => {
-                                let now = chrono::Utc::now().timestamp_millis();
-                                let target_record = crate::core::skill_store::SkillTargetRecord {
-                                    id: uuid::Uuid::new_v4().to_string(),
-                                    skill_id: skill_id.clone(),
-                                    tool: adapter.key.clone(),
-                                    target_path: target.to_string_lossy().to_string(),
-                                    mode: mode.as_str().to_string(),
-                                    status: "ok".to_string(),
-                                    synced_at: Some(now),
-                                    last_error: None,
-                                };
-                                if let Err(e) = store.insert_target(&target_record) {
-                                    log::warn!(
-                                        "Failed to insert sync target for skill {skill_id}: {e}"
-                                    );
-                                }
-                            }
-                            Err(e) => {
-                                log::warn!(
-                                    "Failed to sync skill {skill_id} to {}: {e}",
-                                    target.display()
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
+        sync_skill_to_scenario_active_tools(&store, &scenario_id, &skill_id)?;
         Ok(())
     })
     .await?;

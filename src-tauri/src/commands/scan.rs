@@ -103,6 +103,11 @@ pub async fn import_existing_skill(
                 store
                     .add_skill_to_scenario(&scenario_id, &existing.id)
                     .map_err(AppError::db)?;
+                crate::commands::scenarios::sync_skill_to_scenario_active_tools(
+                    &store,
+                    &scenario_id,
+                    &existing.id,
+                )?;
             }
             return Ok(());
         }
@@ -141,11 +146,16 @@ pub async fn import_existing_skill(
 
         store.insert_skill(&record).map_err(AppError::db)?;
 
-        // Auto-add to active scenario
+        // Auto-add to active scenario + sync to enabled agent tools
         if let Ok(Some(scenario_id)) = store.get_active_scenario_id() {
             store
                 .add_skill_to_scenario(&scenario_id, &id)
                 .map_err(AppError::db)?;
+            crate::commands::scenarios::sync_skill_to_scenario_active_tools(
+                &store,
+                &scenario_id,
+                &id,
+            )?;
         }
 
         Ok(())
@@ -174,7 +184,14 @@ pub async fn import_all_discovered(store: State<'_, Arc<SkillStore>>) -> Result<
                     store.get_skill_by_central_path(&central_path.to_string_lossy())
                 {
                     if let Some(ref scenario_id) = active_scenario {
-                        store.add_skill_to_scenario(scenario_id, &existing.id).ok();
+                        if store.add_skill_to_scenario(scenario_id, &existing.id).is_ok() {
+                            crate::commands::scenarios::sync_skill_to_scenario_active_tools(
+                                &store,
+                                scenario_id,
+                                &existing.id,
+                            )
+                            .ok();
+                        }
                     }
                     continue;
                 }
@@ -210,7 +227,14 @@ pub async fn import_all_discovered(store: State<'_, Arc<SkillStore>>) -> Result<
                     store.insert_skill(&record).ok();
 
                     if let Some(ref scenario_id) = active_scenario {
-                        store.add_skill_to_scenario(scenario_id, &id).ok();
+                        if store.add_skill_to_scenario(scenario_id, &id).is_ok() {
+                            crate::commands::scenarios::sync_skill_to_scenario_active_tools(
+                                &store,
+                                scenario_id,
+                                &id,
+                            )
+                            .ok();
+                        }
                     }
                 }
             }
