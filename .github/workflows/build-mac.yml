@@ -58,8 +58,8 @@ jobs:
 
       - name: Build (Tauri)
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ""
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           npx tauri build --target ${{ matrix.target }} --bundles ${{ github.event.inputs.bundles || 'app,dmg' }}
 
@@ -68,6 +68,8 @@ jobs:
           mkdir -p out
           cp -r src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg out/ 2>/dev/null || true
           cp -r src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.app out/ 2>/dev/null || true
+          # Tauri v2 updater artifacts: *.app.tar.gz + .sig
+          cp -r src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.app.tar.gz* out/ 2>/dev/null || true
           ls -la out/
 
       - name: Upload artifacts

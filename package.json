@@ -1,7 +1,7 @@
 {
   "name": "skills-manager",
   "private": true,
-  "version": "1.11.1-260422.2200",
+  "version": "1.11.1-260423.1447",
   "type": "module",
   "scripts": {
     "dev": "vite",

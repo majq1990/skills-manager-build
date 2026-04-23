@@ -48,3 +48,6 @@ training/
 ~$*.docx
 ~$*.pptx
 ~$*.xlsx
+
+# Tauri updater signing keys — NEVER commit
+.tauri/

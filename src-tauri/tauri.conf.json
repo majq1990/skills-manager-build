@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "skills-manager",
-  "version": "1.11.1-260422.2200",
+  "version": "1.11.1-260423.1447",
   "identifier": "com.agentskills.desktop",
   "build": {
     "frontendDist": "../dist",
@@ -30,15 +30,15 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IERBRUYwMTBDOEQ3MDdEODAKUldTQWZYQ05EQUh2Mm0wNDZtNm5VYWJpbjRaZVJQRUhrQ2tkOXc3MHBWZ2VaREo0OVd3WEU3d0oK",
+      "pubkey": "ZFc1MGNuVnpkR1ZrSUdOdmJXMWxiblE2SUcxcGJtbHphV2R1SUhCMVlteHBZeUJyWlhrNklEYzVSVUZFTWpBME9ETkVRMFpEUmprS1VsZFVOUzlPZVVSQ1RreHhaVk4xUjJwT1VWVlNaMFZPWTBoSmNIY3ZkWGRaYkRSaGFtUTVOMlZtUWpoV1JuSXJWM0k0WmpCd1VHTUs=",
       "endpoints": [
-        "https://github.com/xingkongliang/skills-manager/releases/latest/download/latest.json"
+        "https://demo.egova.com.cn/MediaRoot/skill-manager/latest.json"
       ]
     }
   },
   "bundle": {
     "active": true,
-    "createUpdaterArtifacts": false,
+    "createUpdaterArtifacts": true,
     "targets": "all",
     "icon": [
       "icons/32x32.png",
