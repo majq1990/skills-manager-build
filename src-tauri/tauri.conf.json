@@ -30,7 +30,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "ZFc1MGNuVnpkR1ZrSUdOdmJXMWxiblE2SUcxcGJtbHphV2R1SUhCMVlteHBZeUJyWlhrNklEYzVSVUZFTWpBME9ETkVRMFpEUmprS1VsZFVOUzlPZVVSQ1RreHhaVk4xUjJwT1VWVlNaMFZPWTBoSmNIY3ZkWGRaYkRSaGFtUTVOMlZtUWpoV1JuSXJWM0k0WmpCd1VHTUs=",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc5RUFEMjA0ODNEQ0ZDRjkKUldUNS9OeURCTkxxZVN1R2pOUVVSZ0VOY0hJcHcvdXdZbDRhamQ5N2VmQjhWRnIrV3I4ZjBwUGMK",
       "endpoints": [
         "https://demo.egova.com.cn/MediaRoot/skill-manager/latest.json"
       ]
