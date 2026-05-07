@@ -17,6 +17,8 @@ pub struct EnterpriseSkill {
     // Whether this skill is installed locally
     #[serde(default)]
     pub installed: bool,
+    #[serde(default)]
+    pub download_count: Option<u32>,
 }
 
 /// Skill detail with download URL

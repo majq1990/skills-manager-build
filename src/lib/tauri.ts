@@ -578,6 +578,7 @@ export interface SkillInfo {
   author: string;
   visibility: "global" | "support-dept";
   installed: boolean;
+  download_count?: number;
 }
 
 export const enterpriseLogin = (username: string, password: string) =>

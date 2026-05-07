@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
-import { Search, Loader2, Shield, Download, Check } from "lucide-react";
+import { Search, Loader2, Shield, Download, Check, BarChart3 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { cn } from "../utils";
@@ -220,6 +220,12 @@ export function SkillMarket() {
                   <span className="truncate" title={skill.author}>
                     {skill.author}
                   </span>
+                  {skill.download_count !== undefined && skill.download_count > 0 && (
+                    <span className="flex items-center gap-0.5 text-[11px] text-muted">
+                      <BarChart3 className="h-3 w-3" />
+                      {skill.download_count}
+                    </span>
+                  )}
                 </div>
 
                 {/* Action */}
