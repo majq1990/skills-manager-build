@@ -61,7 +61,6 @@ jobs:
           # GitHub Secrets can introduce soft line wraps when pasted via the web
           # UI; strip all whitespace so base64 decoding succeeds.
           TAURI_SIGNING_PRIVATE_KEY_RAW: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           export TAURI_SIGNING_PRIVATE_KEY=$(printf '%s' "$TAURI_SIGNING_PRIVATE_KEY_RAW" | tr -d '[:space:]')
           echo "key length (sanitized): ${#TAURI_SIGNING_PRIVATE_KEY}"
