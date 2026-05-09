@@ -1,16 +1,17 @@
-# Codemagic 配置：macOS Tauri 打包，build 完直接 scp 到 demo.egova.com.cn
+# Codemagic 配置：macOS Tauri 打包，产物上传到 codemagic cloud（不直接 scp 到 demo）
 #
-# 一次性配置：
+# 经验教训：codemagic mac (海外) → demo (国内) scp 速度 ~30 KB/s，6 个文件 80MB
+# 跑 54min 都没传完，撞 max_build_duration 60min 被 kill。改方案：
+#   - mac 上只 cargo build + bundle
+#   - artifacts 通过 codemagic 内置机制上传到 codemagic cloud
+#   - 用户从 codemagic UI 下载到本地，本地（带代理）scp 到 demo
+#
+# 配置：
 #   1) codemagic.io 连接 GitHub 仓库 majq1990/skills-manager-build
-#   2) Teams > Personal > Environment variables 配置（勾选 Secure）：
-#        - TAURI_SIGNING_PRIVATE_KEY    （base64，与 GitHub secret 同值）
-#        - TAURI_SIGNING_PRIVATE_KEY_PASSWORD（如有，否则空）
-#        - DEMO_SSH_KEY                 （连 demo.egova.com.cn 的 root SSH 私钥）
-#        - DEMO_SSH_HOST                = root@demo.egova.com.cn
-#        - DEMO_REMOTE_DIR              = /egova/MediaRoot/skill-manager
+#   2) Teams > Personal > Environment variables，group 'demo_release' 勾选 Secure：
+#        - TAURI_SIGNING_PRIVATE_KEY
+#        - TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 #   3) 触发：tag v* 自动；或 UI 手动 Start build
-#
-# 此配置不上传 GitHub Release，产物直接送 demo 的更新通道。
 
 workflows:
   macos-build:
@@ -23,12 +24,9 @@ workflows:
         BUNDLE_TARGETS: "app,dmg"
       groups:
         # 在 Codemagic UI > Teams > Personal > Environment variables 创建 group 'demo_release'
-        # 包含 5 个变量（参考 ~/AppData/Local/Temp/codemagic-env.txt）：
+        # 仅需 2 个变量（DEMO_SSH_KEY 等已不需要，scp 改在本地跑）：
         #   TAURI_SIGNING_PRIVATE_KEY (Secure)
         #   TAURI_SIGNING_PRIVATE_KEY_PASSWORD (Secure)
-        #   DEMO_SSH_KEY (Secure)
-        #   DEMO_SSH_HOST
-        #   DEMO_REMOTE_DIR
         - demo_release
     triggering:
       events:
@@ -95,22 +93,14 @@ workflows:
 
           ls -la out/
 
-      - name: Upload to demo.egova.com.cn
+      # 不再在 mac 上 scp 到 demo —— 跨境带宽太差，54min 都没传完一文件。
+      # 走 codemagic 内置 artifacts 上传（去 codemagic cloud），用户本地下载后
+      # 通过本地代理 scp 到 demo（比 mac 直传 demo 快 100 倍）。
+      - name: List artifacts
         script: |
-          set -euxo pipefail
-          # 写 SSH 私钥（保留 BEGIN/END 行；只去 \r，保留 \n）
-          mkdir -p ~/.ssh
-          printf '%s\n' "$DEMO_SSH_KEY" | tr -d '\r' > ~/.ssh/id_demo
-          chmod 600 ~/.ssh/id_demo
-          ssh-keyscan -H "${DEMO_SSH_HOST#*@}" >> ~/.ssh/known_hosts 2>/dev/null
-
-          # scp 到 demo
-          scp -i ~/.ssh/id_demo -o IdentitiesOnly=yes \
-              out/* "$DEMO_SSH_HOST:$DEMO_REMOTE_DIR/"
-
-          echo "Uploaded to $DEMO_SSH_HOST:$DEMO_REMOTE_DIR/"
-          ssh -i ~/.ssh/id_demo -o IdentitiesOnly=yes \
-              "$DEMO_SSH_HOST" "ls -la $DEMO_REMOTE_DIR/ | tail -10"
+          set -eux
+          ls -la out/
+          du -sh out/*
 
     artifacts:
       - out/*.dmg
