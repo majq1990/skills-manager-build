@@ -1,0 +1,126 @@
+# Codemagic 配置：macOS Tauri 打包，build 完直接 scp 到 demo.egova.com.cn
+#
+# 一次性配置：
+#   1) codemagic.io 连接 GitHub 仓库 majq1990/skills-manager-build
+#   2) Teams > Personal > Environment variables 配置（勾选 Secure）：
+#        - TAURI_SIGNING_PRIVATE_KEY    （base64，与 GitHub secret 同值）
+#        - TAURI_SIGNING_PRIVATE_KEY_PASSWORD（如有，否则空）
+#        - DEMO_SSH_KEY                 （连 demo.egova.com.cn 的 root SSH 私钥）
+#        - DEMO_SSH_HOST                = root@demo.egova.com.cn
+#        - DEMO_REMOTE_DIR              = /egova/MediaRoot/skill-manager
+#   3) 触发：tag v* 自动；或 UI 手动 Start build
+#
+# 此配置不上传 GitHub Release，产物直接送 demo 的更新通道。
+
+workflows:
+  macos-build:
+    name: skills-manager macOS build
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    environment:
+      node: 22
+      vars:
+        BUNDLE_TARGETS: "app,dmg"
+      groups:
+        # 在 Codemagic UI > Teams > Personal > Environment variables 创建 group 'demo_release'
+        # 包含 5 个变量（参考 ~/AppData/Local/Temp/codemagic-env.txt）：
+        #   TAURI_SIGNING_PRIVATE_KEY (Secure)
+        #   TAURI_SIGNING_PRIVATE_KEY_PASSWORD (Secure)
+        #   DEMO_SSH_KEY (Secure)
+        #   DEMO_SSH_HOST
+        #   DEMO_REMOTE_DIR
+        - demo_release
+    triggering:
+      events:
+        - tag
+      tag_patterns:
+        - pattern: 'v*'
+          include: true
+
+    scripts:
+      - name: Show toolchain
+        script: |
+          set -euxo pipefail
+          node -v
+          npm -v
+
+      - name: Install Rust + targets
+        script: |
+          set -euxo pipefail
+          curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+          source "$HOME/.cargo/env"
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          rustc --version
+
+      - name: Install npm deps
+        script: |
+          set -euxo pipefail
+          npm ci
+
+      - name: Build aarch64
+        script: |
+          set -euxo pipefail
+          source "$HOME/.cargo/env"
+          export TAURI_SIGNING_PRIVATE_KEY=$(printf '%s' "$TAURI_SIGNING_PRIVATE_KEY" | tr -d '[:space:]')
+          npx tauri build --target aarch64-apple-darwin --bundles app,dmg
+
+      - name: Build x86_64
+        script: |
+          set -euxo pipefail
+          source "$HOME/.cargo/env"
+          export TAURI_SIGNING_PRIVATE_KEY=$(printf '%s' "$TAURI_SIGNING_PRIVATE_KEY" | tr -d '[:space:]')
+          npx tauri build --target x86_64-apple-darwin --bundles app,dmg
+
+      - name: Collect artifacts
+        script: |
+          set -euxo pipefail
+          mkdir -p out
+          VERSION=$(node -p "require('./package.json').version")
+
+          # arm64 dmg + updater
+          cp src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg \
+             "out/skills-manager_${VERSION}_aarch64.dmg"
+          cp src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz \
+             "out/skills-manager_${VERSION}_aarch64.app.tar.gz"
+          cp src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz.sig \
+             "out/skills-manager_${VERSION}_aarch64.app.tar.gz.sig"
+
+          # x86_64 dmg + updater
+          cp src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg \
+             "out/skills-manager_${VERSION}_x86_64.dmg"
+          cp src-tauri/target/x86_64-apple-darwin/release/bundle/macos/*.app.tar.gz \
+             "out/skills-manager_${VERSION}_x86_64.app.tar.gz"
+          cp src-tauri/target/x86_64-apple-darwin/release/bundle/macos/*.app.tar.gz.sig \
+             "out/skills-manager_${VERSION}_x86_64.app.tar.gz.sig"
+
+          ls -la out/
+
+      - name: Upload to demo.egova.com.cn
+        script: |
+          set -euxo pipefail
+          # 写 SSH 私钥（保留 BEGIN/END 行；只去 \r，保留 \n）
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEMO_SSH_KEY" | tr -d '\r' > ~/.ssh/id_demo
+          chmod 600 ~/.ssh/id_demo
+          ssh-keyscan -H "${DEMO_SSH_HOST#*@}" >> ~/.ssh/known_hosts 2>/dev/null
+
+          # scp 到 demo
+          scp -i ~/.ssh/id_demo -o IdentitiesOnly=yes \
+              out/* "$DEMO_SSH_HOST:$DEMO_REMOTE_DIR/"
+
+          echo "Uploaded to $DEMO_SSH_HOST:$DEMO_REMOTE_DIR/"
+          ssh -i ~/.ssh/id_demo -o IdentitiesOnly=yes \
+              "$DEMO_SSH_HOST" "ls -la $DEMO_REMOTE_DIR/ | tail -10"
+
+    artifacts:
+      - out/*.dmg
+      - out/*.app.tar.gz
+      - out/*.app.tar.gz.sig
+
+    publishing:
+      email:
+        recipients:
+          - phneixfh@gmail.com
+        notify:
+          success: true
+          failure: true

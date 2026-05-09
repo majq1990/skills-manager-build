@@ -51,3 +51,13 @@ training/
 
 # Tauri updater signing keys — NEVER commit
 .tauri/
+signer.key
+signer.key.pub
+signer.key.bak.*
+signer.key.pub.bak.*
+
+# Local build artifacts cache (used by scripts/release.sh)
+build-cache/
+
+# Claude / agent metadata
+.omc/
