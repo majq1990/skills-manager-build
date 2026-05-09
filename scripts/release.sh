@@ -148,12 +148,26 @@ fi
 if [ "$WIN_AVAILABLE" = 1 ]; then
     UPLOADS+=("$WIN_EXE" "$WIN_SIG")
 fi
-UPLOADS+=("$STAGE/latest.json")
+# 总是把 latest.json 拷一份到 build-cache 供预览/手工发布
+LOCAL_MANIFEST="$REPO_ROOT/build-cache/latest.json.next"
+mkdir -p "$(dirname "$LOCAL_MANIFEST")"
+cp "$STAGE/latest.json" "$LOCAL_MANIFEST"
+
+# SKIP_MANIFEST_UPLOAD=1 时只 scp 二进制，远端 latest.json 保持当前（保护老用户）
+if [ "${SKIP_MANIFEST_UPLOAD:-}" != "1" ]; then
+    UPLOADS+=("$STAGE/latest.json")
+fi
 
 scp "${UPLOADS[@]}" "$REMOTE_HOST:$REMOTE_DIR/"
 
 echo
 echo "[release] done."
-echo "  Endpoint: $PUBLIC_BASE/latest.json"
-echo "  Artifacts uploaded: ${#UPLOADS[@]} files"
+if [ "${SKIP_MANIFEST_UPLOAD:-}" = "1" ]; then
+    echo "  Manifest NOT uploaded (SKIP_MANIFEST_UPLOAD=1)."
+    echo "    preview: $LOCAL_MANIFEST"
+    echo "    publish later: scp \"$LOCAL_MANIFEST\" $REMOTE_HOST:$REMOTE_DIR/latest.json"
+else
+    echo "  Endpoint: $PUBLIC_BASE/latest.json"
+fi
+echo "  Binaries uploaded: ${#UPLOADS[@]} files"
 [ "$MAC_AVAILABLE" = 0 ] && echo "  (mac binaries served separately by Codemagic when tag pushed)"
