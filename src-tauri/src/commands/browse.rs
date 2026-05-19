@@ -437,19 +437,21 @@ pub async fn install_skillhub_skill(
     tauri::async_runtime::spawn_blocking(move || {
         let api = SkillHubApi::new();
 
-        let zip_bytes = api
-            .download_skill(&skill_id)
-            .map_err(|e| AppError::network(format!("Download failed: {}", e)))?;
-
         let skill_info = api
             .get_skill(&skill_id)
             .map_err(|e| AppError::network(format!("Failed to get skill info: {}", e)))?;
 
-        let temp_dir = tempfile::tempdir().map_err(AppError::io)?;
-        let zip_path = temp_dir.path().join("skill.zip");
-        std::fs::write(&zip_path, &zip_bytes).map_err(AppError::io)?;
+        let version = skill_info
+            .version
+            .clone()
+            .ok_or_else(|| AppError::network("SkillHub skill has no resolvable version".to_string()))?;
 
-        let result = installer::install_from_local(&zip_path, Some(&skill_info.name))
+        // skillhub.cn 无 zip 打包接口，逐文件物化到临时目录后按目录安装
+        let temp_dir = tempfile::tempdir().map_err(AppError::io)?;
+        api.materialize_skill(&skill_id, &version, temp_dir.path())
+            .map_err(|e| AppError::network(format!("Download failed: {}", e)))?;
+
+        let result = installer::install_from_local(temp_dir.path(), Some(&skill_info.name))
             .map_err(|e| AppError::internal(format!("Install failed: {}", e)))?;
 
         let metadata = InstallSourceMetadata {

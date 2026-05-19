@@ -329,11 +329,14 @@ pub fn convert_to_mirror_url(original_source: &str, mirror_name: &str) -> String
 /// Convert GitHub URL to Gitee equivalent
 fn convert_github_to_gitee(github_url: &str) -> String {
     // Extract user/repo from GitHub URL
-    if let Some(caps) = regex::Regex::new(r"github\.com/([^/]+)/([^/]+?)(?:\.git)?")
+    if let Some(caps) = regex::Regex::new(r"github\.com/([^/]+)/([^/?#]+)")
         .ok()
         .and_then(|re| re.captures(github_url)) {
         let user = caps.get(1).map(|m| m.as_str()).unwrap_or("");
-        let repo = caps.get(2).map(|m| m.as_str()).unwrap_or("");
+        let repo = caps
+            .get(2)
+            .map(|m| m.as_str().strip_suffix(".git").unwrap_or(m.as_str()))
+            .unwrap_or("");
         return format!("https://gitee.com/{}/{}.git", user, repo);
     }
     github_url.to_string()

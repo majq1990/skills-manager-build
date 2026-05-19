@@ -5,6 +5,13 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.11.3] - 2026-05-19
+
+### 修复
+- 切换到真实 skillhub.cn API，恢复 SkillHub 搜索和安装能力。
+- SkillHub 无归档下载接口时，按文件清单逐文件物化后再安装。
+- 修复 GitHub 仓库地址转换为 Gitee 镜像地址时 `.git` 仓库名被截断的问题。
+
 ## [1.11.1] - 2026-03-28
 
 ### 变更

@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.3] - 2026-05-19
+
+### Fixed
+- Restore SkillHub search and installs by switching to the real skillhub.cn API.
+- Install SkillHub packages by materializing file lists when no archive endpoint is available.
+- Fix GitHub-to-Gitee mirror URL conversion for repositories ending in `.git`.
+
 ## [1.11.2] - 2026-05-07
 
 ### Added
