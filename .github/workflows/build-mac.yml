@@ -7,9 +7,7 @@ on:
         description: "Bundles to build (comma separated: app,dmg or all)"
         required: false
         default: "app,dmg"
-  push:
-    tags:
-      - "v*"
+  # macOS tag builds are handled by Codemagic; keep this workflow manual as a fallback.
 
 jobs:
   build-macos:

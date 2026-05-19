@@ -5,6 +5,11 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.11.4] - 2026-05-19
+
+### 修复
+- 通过 GitHub Windows/Linux 流水线发布 SkillHub 修复，macOS 打包继续交给 Codemagic。
+
 ## [1.11.3] - 2026-05-19
 
 ### 修复
