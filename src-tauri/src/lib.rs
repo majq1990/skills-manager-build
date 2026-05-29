@@ -11,6 +11,8 @@ static TRAY_SCENARIO_SWITCH_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new((
 const MAIN_TRAY_ID: &str = "main-tray";
 const TRAY_SCENARIO_ITEM_PREFIX: &str = "tray-scenario:";
 const CUSTOM_TRAY_ICON_BYTES: &[u8] = include_bytes!("../icons/tray/tray-icon-32.png");
+#[cfg(target_os = "windows")]
+const CUSTOM_TRAY_ICON_ICO_BYTES: &[u8] = include_bytes!("../icons/icon.ico");
 
 fn parse_bool_setting(value: Option<String>, default: bool) -> bool {
     match value.as_deref().map(str::trim).map(str::to_ascii_lowercase) {
@@ -71,15 +73,43 @@ fn request_quit(app: &tauri::AppHandle) {
 }
 
 fn load_custom_tray_icon() -> Option<tauri::image::Image<'static>> {
-    let img = image::load_from_memory_with_format(CUSTOM_TRAY_ICON_BYTES, image::ImageFormat::Png)
-        .ok()?;
-    let rgba = img.to_rgba8();
-    let (width, height) = rgba.dimensions();
-    Some(tauri::image::Image::new_owned(
-        rgba.into_raw(),
-        width,
-        height,
-    ))
+    #[cfg(target_os = "windows")]
+    {
+        log::info!("Loading custom tray icon from embedded ICO ({} bytes)", CUSTOM_TRAY_ICON_ICO_BYTES.len());
+        match image::load_from_memory_with_format(CUSTOM_TRAY_ICON_ICO_BYTES, image::ImageFormat::Ico) {
+            Ok(img) => {
+                let rgba = img.to_rgba8();
+                let (width, height) = rgba.dimensions();
+                log::info!("Tray icon loaded successfully from ICO: {}x{}", width, height);
+                return Some(tauri::image::Image::new_owned(
+                    rgba.into_raw(),
+                    width,
+                    height,
+                ));
+            }
+            Err(e) => {
+                log::warn!("Failed to load tray icon ICO: {}, falling back to PNG", e);
+            }
+        }
+    }
+
+    log::info!("Loading custom tray icon from embedded PNG ({} bytes)", CUSTOM_TRAY_ICON_BYTES.len());
+    match image::load_from_memory_with_format(CUSTOM_TRAY_ICON_BYTES, image::ImageFormat::Png) {
+        Ok(img) => {
+            let rgba = img.to_rgba8();
+            let (width, height) = rgba.dimensions();
+            log::info!("Tray icon loaded successfully from PNG: {}x{}", width, height);
+            Some(tauri::image::Image::new_owned(
+                rgba.into_raw(),
+                width,
+                height,
+            ))
+        }
+        Err(e) => {
+            log::error!("Failed to load tray icon PNG: {}", e);
+            None
+        }
+    }
 }
 
 fn tray_scenario_item_id(scenario_id: &str) -> String {
@@ -263,8 +293,14 @@ fn ensure_tray_icon(app: &tauri::AppHandle) -> tauri::Result<()> {
             }
         });
 
-    if let Some(icon) = load_custom_tray_icon().or_else(|| app.default_window_icon().cloned()) {
+    if let Some(icon) = load_custom_tray_icon().or_else(|| {
+        log::warn!("Custom tray icon failed, falling back to default window icon");
+        app.default_window_icon().cloned()
+    }) {
         builder = builder.icon(icon);
+        log::info!("Tray icon set successfully");
+    } else {
+        log::error!("No tray icon available - neither custom nor default!");
     }
 
     #[cfg(target_os = "macos")]

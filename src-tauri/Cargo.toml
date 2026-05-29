@@ -1,6 +1,6 @@
 [package]
 name = "skills-manager"
-version = "1.0.0"
+version = "1.11.5"
 description = "Skills Manager - AI Agent Skills Central Manager"
 authors = ["tianliang"]
 license = "MIT"
@@ -45,7 +45,7 @@ tempfile = "3.26.0"
 semver = "1"
 aes-gcm = "0.10"
 rand = "0.8"
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["png", "ico"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
