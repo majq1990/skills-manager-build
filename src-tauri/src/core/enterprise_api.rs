@@ -14,6 +14,9 @@ pub struct EnterpriseSkill {
     // visibility for frontend compatibility - maps from category
     #[serde(default)]
     pub visibility: Option<String>,
+    // Tags for categorization and search
+    #[serde(default)]
+    pub tags: Vec<String>,
     // Whether this skill is installed locally
     #[serde(default)]
     pub installed: bool,
@@ -257,6 +260,136 @@ impl EnterpriseApi {
 
         Ok(bytes.to_vec())
     }
+
+    /// Get all unique tags from enterprise server.
+    pub async fn get_tags(
+        &self,
+        server_url: &str,
+        token: &str,
+    ) -> Result<Vec<String>> {
+        let url = format!("{}/skills/tags", server_url.trim_end_matches('/'));
+
+        log::info!("[EnterpriseApi] Fetching tags from: {}", url);
+
+        let response = self
+            .client
+            .get(&url)
+            .bearer_auth(token)
+            .send()
+            .await
+            .context("Failed to fetch tags")?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("Failed to get tags: HTTP {} - {}", status, body));
+        }
+
+        #[derive(Deserialize)]
+        struct TagsResponse {
+            success: bool,
+            tags: Vec<String>,
+        }
+
+        let resp: TagsResponse = response.json().await
+            .context("Failed to parse tags response")?;
+
+        if !resp.success {
+            return Err(anyhow::anyhow!("Server returned success=false for tags"));
+        }
+
+        Ok(resp.tags)
+    }
+
+    /// Search skills by tag.
+    pub async fn search_by_tag(
+        &self,
+        server_url: &str,
+        token: &str,
+        tag: &str,
+    ) -> Result<Vec<EnterpriseSkill>> {
+        let url = format!(
+            "{}/skills/search?tag={}",
+            server_url.trim_end_matches('/'),
+            urlencoding::encode(tag)
+        );
+
+        log::info!("[EnterpriseApi] Searching skills by tag: {}", tag);
+
+        let response = self
+            .client
+            .get(&url)
+            .bearer_auth(token)
+            .send()
+            .await
+            .context("Failed to search by tag")?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("Failed to search by tag: HTTP {} - {}", status, body));
+        }
+
+        #[derive(Deserialize)]
+        struct SkillsResponse {
+            success: bool,
+            skills: Vec<EnterpriseSkill>,
+        }
+
+        let resp: SkillsResponse = response.json().await
+            .context("Failed to parse search response")?;
+
+        if !resp.success {
+            return Err(anyhow::anyhow!("Server returned success=false for search"));
+        }
+
+        Ok(resp.skills)
+    }
+
+    /// Search skills by query string.
+    pub async fn search_by_query(
+        &self,
+        server_url: &str,
+        token: &str,
+        query: &str,
+    ) -> Result<Vec<EnterpriseSkill>> {
+        let url = format!(
+            "{}/skills/search?q={}",
+            server_url.trim_end_matches('/'),
+            urlencoding::encode(query)
+        );
+
+        log::info!("[EnterpriseApi] Searching skills by query: {}", query);
+
+        let response = self
+            .client
+            .get(&url)
+            .bearer_auth(token)
+            .send()
+            .await
+            .context("Failed to search by query")?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("Failed to search by query: HTTP {} - {}", status, body));
+        }
+
+        #[derive(Deserialize)]
+        struct SkillsResponse {
+            success: bool,
+            skills: Vec<EnterpriseSkill>,
+        }
+
+        let resp: SkillsResponse = response.json().await
+            .context("Failed to parse search response")?;
+
+        if !resp.success {
+            return Err(anyhow::anyhow!("Server returned success=false for search"));
+        }
+
+        Ok(resp.skills)
+    }
 }
 
 // ── Upload / Scan / History types ──
@@ -321,7 +454,7 @@ impl EnterpriseApi {
         name: &str,
         zip_bytes: Vec<u8>,
         version: Option<&str>,
-        _category: Option<&str>,
+        category: Option<&str>,
     ) -> Result<UploadResponse> {
         let url = format!("{}/skills/{}/upload", server_url.trim_end_matches('/'), name);
         log::info!("[EnterpriseApi] Uploading skill to: {}", url);
@@ -333,6 +466,11 @@ impl EnterpriseApi {
         let mut form = reqwest::multipart::Form::new().part("package", file_part);
         if let Some(v) = version.filter(|s| !s.is_empty()) {
             form = form.text("version", v.to_string());
+        }
+        let visibility = category.unwrap_or("global");
+        form = form.text("visibility", visibility.to_string());
+        if let Some(cat) = category.filter(|s| !s.is_empty()) {
+            form = form.text("category", cat.to_string());
         }
 
         let response = self

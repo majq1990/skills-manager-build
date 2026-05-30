@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
-import { Search, Loader2, Shield, Download, Check, BarChart3 } from "lucide-react";
+import { Search, Loader2, Shield, Download, Check, BarChart3, Tag, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { cn } from "../utils";
@@ -18,6 +18,8 @@ export function SkillMarket() {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "global" | "support-dept">("all");
   const [installing, setInstalling] = useState<Set<string>>(new Set());
+  const [allTags, setAllTags] = useState<string[]>([]);
+  const [selectedTags, setSelectedTags] = useState<Set<string>>(new Set());
 
   const loadSkills = useCallback(async () => {
     setLoading(true);
@@ -43,11 +45,21 @@ export function SkillMarket() {
     }
   }, [t]);
 
+  const loadTags = useCallback(async () => {
+    try {
+      const tags = await api.enterpriseGetTags();
+      setAllTags(tags);
+    } catch (err) {
+      console.error("Failed to load tags:", err);
+    }
+  }, []);
+
   useEffect(() => {
     if (isAuthenticated) {
       loadSkills();
+      loadTags();
     }
-  }, [isAuthenticated, loadSkills]);
+  }, [isAuthenticated, loadSkills, loadTags]);
 
   const handleInstall = async (name: string) => {
     setInstalling((prev) => new Set(prev).add(name));
@@ -70,18 +82,36 @@ export function SkillMarket() {
     }
   };
 
+  const toggleTag = useCallback((tag: string) => {
+    setSelectedTags((prev) => {
+      const next = new Set(prev);
+      if (next.has(tag)) {
+        next.delete(tag);
+      } else {
+        next.add(tag);
+      }
+      return next;
+    });
+  }, []);
+
   const filtered = useMemo(() => {
     const needle = search.toLowerCase();
     return skills.filter((skill) => {
       if (filter !== "all" && skill.visibility !== filter) return false;
+      if (selectedTags.size > 0) {
+        const skillTags = skill.tags || [];
+        const hasAllTags = Array.from(selectedTags).every((tag) => skillTags.includes(tag));
+        if (!hasAllTags) return false;
+      }
       if (needle) {
         const matchesName = skill.name.toLowerCase().includes(needle);
         const matchesDesc = (skill.description || "").toLowerCase().includes(needle);
-        if (!matchesName && !matchesDesc) return false;
+        const matchesTags = (skill.tags || []).some((tag) => tag.toLowerCase().includes(needle));
+        if (!matchesName && !matchesDesc && !matchesTags) return false;
       }
       return true;
     });
-  }, [skills, search, filter]);
+  }, [skills, search, filter, selectedTags]);
 
   if (!isAuthenticated) {
     return (
@@ -145,6 +175,36 @@ export function SkillMarket() {
           ))}
         </div>
       </div>
+
+      {/* Tag Filter */}
+      {allTags.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 px-1">
+          <Tag className="h-3.5 w-3.5 shrink-0 text-muted mt-0.5" />
+          {allTags.map((tag) => (
+            <button
+              key={tag}
+              onClick={() => toggleTag(tag)}
+              className={cn(
+                "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-medium transition-colors",
+                selectedTags.has(tag)
+                  ? "bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/30"
+                  : "bg-surface-hover text-secondary border border-transparent hover:border-border"
+              )}
+            >
+              {tag}
+              {selectedTags.has(tag) && <X className="h-2.5 w-2.5" />}
+            </button>
+          ))}
+          {selectedTags.size > 0 && (
+            <button
+              onClick={() => setSelectedTags(new Set())}
+              className="text-[11px] text-muted hover:text-secondary underline"
+            >
+              {t("enterprise.market.clearTags", "清除")}
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Loading */}
       {loading && (
@@ -211,6 +271,20 @@ export function SkillMarket() {
                 >
                   {skill.description || "—"}
                 </p>
+
+                {/* Tags */}
+                {skill.tags && skill.tags.length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {skill.tags.map((tag) => (
+                      <span
+                        key={tag}
+                        className="rounded-full bg-blue-500/10 px-2 py-0.5 text-[10px] font-medium text-blue-600 dark:text-blue-400"
+                      >
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                )}
 
                 {/* Meta */}
                 <div className="flex items-center gap-2 text-[12px] text-muted">

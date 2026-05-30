@@ -5,6 +5,9 @@ use std::sync::Arc;
 
 use super::skill_store::SkillStore;
 
+const MAX_IDLE_DAYS: i64 = 7;
+const MAX_IDLE_MILLIS: i64 = MAX_IDLE_DAYS * 24 * 60 * 60 * 1000;
+
 /// Request body for enterprise login API.
 #[derive(Debug, Serialize)]
 pub struct LoginRequest {
@@ -48,6 +51,8 @@ pub struct StoredAuth {
     pub expires_at: i64,
     pub user: UserInfo,
     pub server_url: String,
+    #[serde(default)]
+    pub last_activity: Option<i64>,
 }
 
 /// Enterprise authentication client.
@@ -172,18 +177,16 @@ impl EnterpriseAuth {
             is_support_dept: user.is_support_dept,
         };
 
+        let now = Utc::now().timestamp_millis();
         let stored_auth = StoredAuth {
             token: login_response.token.clone(),
             expires_at: login_response.expires_at,
             user: login_response.user.clone(),
             server_url: base_url.clone(),
+            last_activity: Some(now),
         };
 
-        let auth_json = serde_json::to_string(&stored_auth)
-            .context("Failed to serialize auth data")?;
-        store
-            .set_setting("enterprise_auth_token", &auth_json)
-            .context("Failed to store auth token")?;
+        Self::persist_auth(store, &stored_auth)?;
         store
             .set_setting("enterprise_server_url", &base_url)
             .context("Failed to store server URL")?;
@@ -193,9 +196,21 @@ impl EnterpriseAuth {
 
     /// Logout - clear stored authentication.
     pub fn logout(store: &Arc<SkillStore>) -> Result<()> {
+        Self::clear_auth(store)
+    }
+
+    fn clear_auth(store: &Arc<SkillStore>) -> Result<()> {
         store
             .set_setting("enterprise_auth_token", "")
             .context("Failed to clear auth token")?;
+        Ok(())
+    }
+
+    fn persist_auth(store: &Arc<SkillStore>, auth: &StoredAuth) -> Result<()> {
+        let auth_json = serde_json::to_string(auth).context("Failed to serialize auth data")?;
+        store
+            .set_setting("enterprise_auth_token", &auth_json)
+            .context("Failed to store auth token")?;
         Ok(())
     }
 
@@ -216,26 +231,106 @@ impl EnterpriseAuth {
         }
     }
 
+    /// Get stored auth and apply Tauri-side session rules:
+    /// - token absolute expiry still follows the server-issued expires_at
+    /// - if the app has been idle for more than 7 days, require re-login
+    /// - any successful use updates last_activity to keep the session alive
+    pub fn get_valid_auth(
+        store: &Arc<SkillStore>,
+        touch_activity: bool,
+    ) -> Result<Option<StoredAuth>> {
+        let Some(mut auth) = Self::get_auth(store)? else {
+            return Ok(None);
+        };
+
+        let now = Utc::now().timestamp_millis();
+        let last_activity = auth.last_activity.unwrap_or(now);
+        let expired = auth.expires_at <= now;
+        let idle_too_long = now.saturating_sub(last_activity) > MAX_IDLE_MILLIS;
+
+        if expired || idle_too_long {
+            Self::clear_auth(store)?;
+            return Ok(None);
+        }
+
+        if touch_activity {
+            auth.last_activity = Some(now);
+            Self::persist_auth(store, &auth)?;
+        }
+
+        Ok(Some(auth))
+    }
+
     /// Check if user is currently authenticated (token exists and not expired).
     pub fn is_authenticated(store: &Arc<SkillStore>) -> Result<bool> {
-        let auth = Self::get_auth(store)?;
-        match auth {
-            None => Ok(false),
-            Some(auth_data) => {
-                let now = Utc::now().timestamp_millis();
-                Ok(auth_data.expires_at > now)
-            }
-        }
+        Ok(Self::get_valid_auth(store, true)?.is_some())
     }
 
     /// Check if authenticated user has support-dept role.
     pub fn is_support_dept(store: &Arc<SkillStore>) -> Result<bool> {
-        let auth = Self::get_auth(store)?;
-        match auth {
+        match Self::get_valid_auth(store, true)? {
             None => Ok(false),
             Some(auth_data) => {
                 Ok(auth_data.user.is_support_dept || auth_data.user.roles.iter().any(|r| r.contains("支持部")))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use tempfile::tempdir;
+
+    fn make_store() -> Arc<SkillStore> {
+        let tmp = tempdir().unwrap();
+        let db_path = tmp.path().join("skills-manager.db");
+        // Keep tempdir alive for the lifetime of the store in this test scope.
+        let leaked = Box::leak(Box::new(tmp));
+        let db_path = PathBuf::from(leaked.path().join("skills-manager.db"));
+        Arc::new(SkillStore::new(&db_path).unwrap())
+    }
+
+    fn save_auth(store: &Arc<SkillStore>, auth: &StoredAuth) {
+        let json = serde_json::to_string(auth).unwrap();
+        store.set_setting("enterprise_auth_token", &json).unwrap();
+    }
+
+    fn sample_auth(last_activity: Option<i64>) -> StoredAuth {
+        let now = Utc::now().timestamp_millis();
+        StoredAuth {
+            token: "token".into(),
+            expires_at: now + 30 * 24 * 60 * 60 * 1000,
+            user: UserInfo {
+                id: "1".into(),
+                username: "majq1".into(),
+                roles: vec!["支持部".into()],
+                department: "支持部".into(),
+                is_support_dept: true,
+            },
+            server_url: "https://demo.egova.com.cn/skill-api/".into(),
+            last_activity,
+        }
+    }
+
+    #[test]
+    fn valid_auth_updates_last_activity() {
+        let store = make_store();
+        let old = Utc::now().timestamp_millis() - 60_000;
+        save_auth(&store, &sample_auth(Some(old)));
+
+        let auth = EnterpriseAuth::get_valid_auth(&store, true).unwrap().unwrap();
+        assert!(auth.last_activity.unwrap() >= old);
+    }
+
+    #[test]
+    fn idle_auth_requires_relogin_after_seven_days() {
+        let store = make_store();
+        let stale = Utc::now().timestamp_millis() - (MAX_IDLE_MILLIS + 1_000);
+        save_auth(&store, &sample_auth(Some(stale)));
+
+        let auth = EnterpriseAuth::get_valid_auth(&store, true).unwrap();
+        assert!(auth.is_none());
     }
 }

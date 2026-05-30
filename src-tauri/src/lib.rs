@@ -576,6 +576,9 @@ pub fn run() {
             commands::enterprise::enterprise_check_scan,
             commands::enterprise::enterprise_trigger_scan,
             commands::enterprise::enterprise_upload_history,
+            commands::enterprise::enterprise_get_tags,
+            commands::enterprise::enterprise_search_by_tag,
+            commands::enterprise::enterprise_search_by_query,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

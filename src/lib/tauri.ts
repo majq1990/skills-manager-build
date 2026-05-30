@@ -579,6 +579,7 @@ export interface SkillInfo {
   visibility: "global" | "support-dept";
   installed: boolean;
   download_count?: number;
+  tags?: string[];
 }
 
 export const enterpriseLogin = (username: string, password: string) =>
@@ -658,3 +659,14 @@ export const enterpriseTriggerScan = (name: string, version: string) =>
 
 export const enterpriseUploadHistory = (name: string) =>
   invoke<VersionInfo[]>("enterprise_upload_history", { name });
+
+// ── Enterprise Tags / Search ──
+
+export const enterpriseGetTags = () =>
+  invoke<string[]>("enterprise_get_tags");
+
+export const enterpriseSearchByTag = (tag: string) =>
+  invoke<SkillInfo[]>("enterprise_search_by_tag", { tag });
+
+export const enterpriseSearchByQuery = (query: string) =>
+  invoke<SkillInfo[]>("enterprise_search_by_query", { query });

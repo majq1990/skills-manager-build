@@ -81,6 +81,12 @@ pub fn scan_local_skills_with_adapters(
                     continue;
                 }
 
+                // Restrict discovery to real skill-like directories. Large cache
+                // or automation folders can otherwise make a rescan feel hung.
+                if !skill_metadata::is_valid_skill_dir(&path) {
+                    continue;
+                }
+
                 let name = skill_metadata::infer_skill_name(&path);
                 let fingerprint = content_hash::hash_directory(&path).ok();
 
@@ -110,6 +116,45 @@ pub fn scan_local_skills_with_adapters(
         skills_found,
         discovered,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::tool_adapters::ToolAdapter;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn scan_skips_non_skill_directories() {
+        let tmp = tempdir().unwrap();
+        let valid = tmp.path().join("valid-skill");
+        let invalid = tmp.path().join("plugin-cache");
+
+        fs::create_dir_all(&valid).unwrap();
+        fs::create_dir_all(&invalid).unwrap();
+        fs::write(valid.join("SKILL.md"), "---\nname: valid-skill\n---\n").unwrap();
+        fs::write(invalid.join("notes.txt"), "not a skill").unwrap();
+
+        let adapter = ToolAdapter {
+            key: "test".into(),
+            display_name: "Test".into(),
+            relative_skills_dir: String::new(),
+            relative_detect_dir: String::new(),
+            additional_scan_dirs: vec![],
+            override_skills_dir: Some(tmp.path().to_string_lossy().to_string()),
+            is_custom: true,
+        };
+
+        let plan = scan_local_skills_with_adapters(&[], &[adapter]).unwrap();
+        assert_eq!(plan.tools_scanned, 1);
+        assert_eq!(plan.skills_found, 1);
+        assert_eq!(plan.discovered.len(), 1);
+        assert_eq!(
+            plan.discovered[0].name_guess.as_deref(),
+            Some("valid-skill")
+        );
+    }
 }
 
 pub fn group_discovered(records: &[DiscoveredSkillRecord]) -> Vec<DiscoveredGroup> {

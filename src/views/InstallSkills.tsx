@@ -210,6 +210,15 @@ export function InstallSkills() {
     }
   }, [t]);
 
+  const refreshDiscoveredSnapshot = useCallback(async () => {
+    try {
+      const cached = await api.getDiscoveredGroups();
+      setScanResult(cached);
+    } catch (error) {
+      console.warn("Failed to refresh discovered skills snapshot", error);
+    }
+  }, []);
+
   useEffect(() => {
     if (activeTab !== "market") return;
 
@@ -315,12 +324,12 @@ export function InstallSkills() {
   }, [activeTab, scanLoading, scanResult, runScan]);
 
   const installLocalSource = async (sourcePath: string) => {
-    const name = sourcePath.split("/").pop() || sourcePath;
+    const name = sourcePath.split(/[\\/]/).pop() || sourcePath;
     const toastId = toast.loading(t("install.toast.installing", { name }));
     try {
       await api.installLocal(sourcePath);
       await Promise.all([refreshScenarios(), refreshManagedSkills()]);
-      await runScan();
+      await refreshDiscoveredSnapshot();
       toast.success(t("install.toast.success", { name }), {
         id: toastId,
         action: {

@@ -8,11 +8,19 @@ use crate::core::{
         EnterpriseApi, EnterpriseSkill, EnterpriseSkillDetail, ScanStatusResponse,
         ScanTriggerResponse, UploadResponse, VersionInfo,
     },
-    enterprise_auth::{EnterpriseAuth, LoginResponse, StoredAuth},
+    enterprise_auth::{EnterpriseAuth, LoginResponse},
     installer,
     skill_packer,
     skill_store::{SkillRecord, SkillStore},
 };
+
+#[derive(serde::Serialize)]
+pub struct AuthStatus {
+    pub authenticated: bool,
+    pub username: Option<String>,
+    pub department: Option<String>,
+    pub is_support_dept: bool,
+}
 
 #[tauri::command]
 pub async fn enterprise_login(
@@ -43,10 +51,24 @@ pub async fn enterprise_logout(store: State<'_, Arc<SkillStore>>) -> Result<(), 
 #[tauri::command]
 pub async fn enterprise_get_auth(
     store: State<'_, Arc<SkillStore>>,
-) -> Result<Option<StoredAuth>, AppError> {
+) -> Result<AuthStatus, AppError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        EnterpriseAuth::get_auth(&store).map_err(AppError::db)
+        let auth = EnterpriseAuth::get_valid_auth(&store, true).map_err(AppError::db)?;
+        Ok(match auth {
+            Some(stored) => AuthStatus {
+                authenticated: true,
+                username: Some(stored.user.username),
+                department: Some(stored.user.department),
+                is_support_dept: stored.user.is_support_dept,
+            },
+            None => AuthStatus {
+                authenticated: false,
+                username: None,
+                department: None,
+                is_support_dept: false,
+            },
+        })
     })
     .await?
 }
@@ -80,7 +102,7 @@ pub async fn enterprise_list_skills(
     let store_for_list = store.clone();
 
     let auth = tauri::async_runtime::spawn_blocking(move || {
-        EnterpriseAuth::get_auth(&store).map_err(AppError::db)
+        EnterpriseAuth::get_valid_auth(&store, true).map_err(AppError::db)
     })
     .await??;
 
@@ -124,7 +146,7 @@ pub async fn enterprise_get_skill(
     let store = store.inner().clone();
 
     let auth = tauri::async_runtime::spawn_blocking(move || {
-        EnterpriseAuth::get_auth(&store).map_err(AppError::db)
+        EnterpriseAuth::get_valid_auth(&store, true).map_err(AppError::db)
     })
     .await??;
 
@@ -147,7 +169,7 @@ pub async fn enterprise_download_skill(
     let store = store.inner().clone();
 
     let auth = tauri::async_runtime::spawn_blocking(move || {
-        EnterpriseAuth::get_auth(&store).map_err(AppError::db)
+        EnterpriseAuth::get_valid_auth(&store, true).map_err(AppError::db)
     })
     .await??;
 
@@ -174,7 +196,7 @@ pub async fn enterprise_install_skill(
     let store_for_install = store.clone();
 
     let auth = tauri::async_runtime::spawn_blocking(move || {
-        EnterpriseAuth::get_auth(&store).map_err(AppError::db)
+        EnterpriseAuth::get_valid_auth(&store, true).map_err(AppError::db)
     })
     .await??;
 
@@ -385,7 +407,7 @@ pub async fn enterprise_upload_skill(
 
     let auth = tauri::async_runtime::spawn_blocking({
         let store = store_for_auth.clone();
-        move || EnterpriseAuth::get_auth(&store).map_err(AppError::db)
+        move || EnterpriseAuth::get_valid_auth(&store, true).map_err(AppError::db)
     })
     .await??
     .ok_or_else(|| AppError::unauthorized("Not authenticated"))?;
@@ -418,7 +440,7 @@ pub async fn enterprise_check_scan(
 ) -> Result<ScanStatusResponse, AppError> {
     let store = store.inner().clone();
     let auth = tauri::async_runtime::spawn_blocking(move || {
-        EnterpriseAuth::get_auth(&store).map_err(AppError::db)
+        EnterpriseAuth::get_valid_auth(&store, true).map_err(AppError::db)
     })
     .await??
     .ok_or_else(|| AppError::unauthorized("Not authenticated"))?;
@@ -437,7 +459,7 @@ pub async fn enterprise_trigger_scan(
 ) -> Result<ScanTriggerResponse, AppError> {
     let store = store.inner().clone();
     let auth = tauri::async_runtime::spawn_blocking(move || {
-        EnterpriseAuth::get_auth(&store).map_err(AppError::db)
+        EnterpriseAuth::get_valid_auth(&store, true).map_err(AppError::db)
     })
     .await??
     .ok_or_else(|| AppError::unauthorized("Not authenticated"))?;
@@ -455,13 +477,66 @@ pub async fn enterprise_upload_history(
 ) -> Result<Vec<VersionInfo>, AppError> {
     let store = store.inner().clone();
     let auth = tauri::async_runtime::spawn_blocking(move || {
-        EnterpriseAuth::get_auth(&store).map_err(AppError::db)
+        EnterpriseAuth::get_valid_auth(&store, true).map_err(AppError::db)
     })
     .await??
     .ok_or_else(|| AppError::unauthorized("Not authenticated"))?;
 
     let api = EnterpriseApi::new();
     api.get_upload_history(&auth.server_url, &auth.token, &name)
+        .await
+        .map_err(|e| AppError::network(e.to_string()))
+}
+
+#[tauri::command]
+pub async fn enterprise_get_tags(
+    store: State<'_, Arc<SkillStore>>,
+) -> Result<Vec<String>, AppError> {
+    let store = store.inner().clone();
+    let auth = tauri::async_runtime::spawn_blocking(move || {
+        EnterpriseAuth::get_valid_auth(&store, true).map_err(AppError::db)
+    })
+    .await??
+    .ok_or_else(|| AppError::unauthorized("Not authenticated"))?;
+
+    let api = EnterpriseApi::new();
+    api.get_tags(&auth.server_url, &auth.token)
+        .await
+        .map_err(|e| AppError::network(e.to_string()))
+}
+
+#[tauri::command]
+pub async fn enterprise_search_by_tag(
+    tag: String,
+    store: State<'_, Arc<SkillStore>>,
+) -> Result<Vec<EnterpriseSkill>, AppError> {
+    let store = store.inner().clone();
+    let auth = tauri::async_runtime::spawn_blocking(move || {
+        EnterpriseAuth::get_valid_auth(&store, true).map_err(AppError::db)
+    })
+    .await??
+    .ok_or_else(|| AppError::unauthorized("Not authenticated"))?;
+
+    let api = EnterpriseApi::new();
+    api.search_by_tag(&auth.server_url, &auth.token, &tag)
+        .await
+        .map_err(|e| AppError::network(e.to_string()))
+}
+
+#[tauri::command]
+pub async fn enterprise_search_by_query(
+    query: String,
+    store: State<'_, Arc<SkillStore>>,
+) -> Result<Vec<EnterpriseSkill>, AppError> {
+    let store = store.inner().clone();
+    let auth = tauri::async_runtime::spawn_blocking(move || {
+        EnterpriseAuth::get_valid_auth(&store, true).map_err(AppError::db)
+    })
+    .await??
+    .ok_or_else(|| AppError::unauthorized("Not authenticated"))?;
+
+    let api = EnterpriseApi::new();
+    api.search_by_query(&auth.server_url, &auth.token, &query)
         .await
         .map_err(|e| AppError::network(e.to_string()))
 }
