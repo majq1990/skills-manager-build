@@ -5,6 +5,8 @@ pub mod content_hash;
 pub mod crypto;
 pub mod domestic_mcp_api;
 pub mod enterprise_api;
+pub mod feedback_deploy;
+pub mod feedback_token;
 pub mod error;
 pub mod file_watcher;
 pub mod gitee_api;

@@ -1,6 +1,6 @@
 [package]
 name = "skills-manager"
-version = "1.22.9"
+version = "1.23.0"
 description = "Skills Manager - AI Agent Skills Central Manager"
 authors = ["tianliang"]
 license = "MIT"

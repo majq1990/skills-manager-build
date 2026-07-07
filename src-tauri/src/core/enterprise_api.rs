@@ -419,7 +419,9 @@ impl EnterpriseApi {
         description: &str,
     ) -> Result<()> {
         let client = Self::build_client();
-        let url = format!("{}/api/v1/feedback", self.base_url);
+        // base_url 已含 /skill-api（nginx 映射到 /api/v1/），只加 /feedback；
+        // 加 /api/v1 会变成 /skill-api/api/v1/feedback → 404。
+        let url = format!("{}/feedback", self.base_url);
 
         let mut body = serde_json::Map::new();
         body.insert(

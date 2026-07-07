@@ -1001,6 +1001,7 @@ pub fn run() {
             commands::enterprise::enterprise_is_authenticated,
             commands::enterprise::enterprise_logout,
             commands::enterprise::enterprise_submit_feedback,
+            commands::enterprise::feedback_deploy_plugin,
             commands::enterprise::enterprise_upload_skill,
             // Settings
             commands::settings::get_settings,
