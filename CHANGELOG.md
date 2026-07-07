@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.23.1] - 2026-07-07
+
+### Fixed
+- 设置页版本号显示改为动态读取真实应用版本（此前硬编码为旧版本号）。
+- 更新失败时的「下载页」跳转指向 download.html（原目录地址会 403）。
+
 ## [1.23.0] - 2026-07-07
 
 ### Added

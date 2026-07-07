@@ -48,6 +48,7 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
+import { getVersion } from "@tauri-apps/api/app";
 import { writeText as clipboardWriteText } from "@tauri-apps/plugin-clipboard-manager";
 import { check as checkUpdater } from "@tauri-apps/plugin-updater";
 import { open as dialogOpen, confirm as dialogConfirm } from "@tauri-apps/plugin-dialog";
@@ -181,6 +182,10 @@ export function Settings() {
   const [savingCentralRepoPath, setSavingCentralRepoPath] = useState(false);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [updateInfo, setUpdateInfo] = useState<AppUpdateInfo | null>(null);
+  const [appVersion, setAppVersion] = useState("");
+  useEffect(() => {
+    getVersion().then(setAppVersion).catch(() => {});
+  }, []);
   const [installing, setInstalling] = useState(false);
   const [gitRemoteInput, setGitRemoteInput] = useState("");
   const [gitRemoteSaving, setGitRemoteSaving] = useState(false);
@@ -1611,7 +1616,7 @@ export function Settings() {
                 <Settings2 className="w-4 h-4 text-accent" />
               </div>
               <div>
-                <h3 className="text-[13px] font-semibold text-primary">{t("settings.version")}</h3>
+                <h3 className="text-[13px] font-semibold text-primary">{t("settings.version")}{appVersion ? ` v${appVersion}` : ""}</h3>
                 <p className="text-muted text-[13px]">
                   {t("settings.tagline")}
                   {updateInfo?.has_update && (
