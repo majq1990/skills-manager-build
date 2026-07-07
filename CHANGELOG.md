@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.23.0] - 2026-07-07
+
+### Added
+- 反馈监控（feedback-monitor）：为 opencode / Claude Code / 腾讯 WorkBuddy 三个已验证的 agent 默认部署反馈插件，登录或安装企业技能时自动联动部署。三通道——连续多轮同类问题卡住、工具执行报错自动上报，以及使用中主动触发；上报前本地脱敏，经登录态提交到企业服务器。
+- 企业技能自动更新：登录后自动将已安装的企业技能更新到服务端最新版本（此前企业技能无法更新）。
+
+### Fixed
+- 修正反馈提交接口路径（去掉多余的 `/api/v1` 前缀，此前手动反馈会 404）。
+
 ## [1.22.9] - 2026-06-15
 
 ### Added
