@@ -15,6 +15,7 @@ import {
   AlertTriangle,
   BookOpen,
   Bug,
+  MessageSquarePlus,
   Download,
   FileArchive,
   Type,
@@ -47,6 +48,7 @@ import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
+import { getVersion } from "@tauri-apps/api/app";
 import { writeText as clipboardWriteText } from "@tauri-apps/plugin-clipboard-manager";
 import { check as checkUpdater } from "@tauri-apps/plugin-updater";
 import { open as dialogOpen, confirm as dialogConfirm } from "@tauri-apps/plugin-dialog";
@@ -54,6 +56,7 @@ import { cn } from "../utils";
 import { useApp } from "../context/AppContext";
 import { useThemeContext } from "../context/ThemeContext";
 import { AgentIcon } from "../components/AgentIcon";
+import { FeedbackDialog } from "../components/FeedbackDialog";
 import * as api from "../lib/tauri";
 import { applyTextSize } from "../lib/textScale";
 import { getErrorMessage } from "../lib/error";
@@ -170,6 +173,7 @@ export function Settings() {
   const [openingRepo, setOpeningRepo] = useState(false);
   const [reportingIssue, setReportingIssue] = useState(false);
   const [exportingLogs, setExportingLogs] = useState(false);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [lastPanic, setLastPanic] = useState<api.PanicInfo | null>(null);
   const [centralRepoPath, setCentralRepoPath] = useState("");
   const [centralRepoPathOverride, setCentralRepoPathOverride] = useState<string | null>(null);
@@ -178,6 +182,10 @@ export function Settings() {
   const [savingCentralRepoPath, setSavingCentralRepoPath] = useState(false);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [updateInfo, setUpdateInfo] = useState<AppUpdateInfo | null>(null);
+  const [appVersion, setAppVersion] = useState("");
+  useEffect(() => {
+    getVersion().then(setAppVersion).catch(() => {});
+  }, []);
   const [installing, setInstalling] = useState(false);
   const [gitRemoteInput, setGitRemoteInput] = useState("");
   const [gitRemoteSaving, setGitRemoteSaving] = useState(false);
@@ -1608,7 +1616,7 @@ export function Settings() {
                 <Settings2 className="w-4 h-4 text-accent" />
               </div>
               <div>
-                <h3 className="text-[13px] font-semibold text-primary">{t("settings.version")}</h3>
+                <h3 className="text-[13px] font-semibold text-primary">{t("settings.version")}{appVersion ? ` v${appVersion}` : ""}</h3>
                 <p className="text-muted text-[13px]">
                   {t("settings.tagline")}
                   {updateInfo?.has_update && (
@@ -1691,6 +1699,14 @@ export function Settings() {
               </button>
               <button
                 type="button"
+                onClick={() => setFeedbackOpen(true)}
+                className={`${actionButtonClass} bg-surface-hover hover:bg-surface-active text-tertiary border-border`}
+              >
+                <MessageSquarePlus className="w-3 h-3" />
+                {t("feedback.title")}
+              </button>
+              <button
+                type="button"
                 onClick={handleExportLogs}
                 disabled={exportingLogs}
                 title={t("settings.exportLogsHint")}
@@ -1707,6 +1723,11 @@ export function Settings() {
           </div>
         </section>
       </div>
+      <FeedbackDialog
+        open={feedbackOpen}
+        defaultType="工具问题"
+        onClose={() => setFeedbackOpen(false)}
+      />
     </div>
   );
 }

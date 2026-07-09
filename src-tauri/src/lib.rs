@@ -948,6 +948,7 @@ pub fn run() {
             commands::skills::delete_managed_skills,
             commands::skills::install_local,
             commands::skills::install_git,
+            commands::skills::enterprise_install_skill,
             commands::skills::preview_git_install,
             commands::skills::confirm_git_install,
             commands::skills::cancel_git_preview,
@@ -999,6 +1000,9 @@ pub fn run() {
             commands::enterprise::enterprise_search_by_query,
             commands::enterprise::enterprise_is_authenticated,
             commands::enterprise::enterprise_logout,
+            commands::enterprise::enterprise_submit_feedback,
+            commands::enterprise::feedback_deploy_plugin,
+            commands::enterprise::enterprise_upload_skill,
             // Settings
             commands::settings::get_settings,
             commands::settings::set_settings,

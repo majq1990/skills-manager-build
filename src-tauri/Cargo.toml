@@ -1,6 +1,6 @@
 [package]
 name = "skills-manager"
-version = "1.22.6"
+version = "1.23.1"
 description = "Skills Manager - AI Agent Skills Central Manager"
 authors = ["tianliang"]
 license = "MIT"
@@ -35,7 +35,7 @@ walkdir = "2.5"
 fs2 = "0.4"
 unicode-normalization = "0.1"
 caseless = "0.2"
-reqwest = { version = "0.12", features = ["blocking", "json"] }
+reqwest = { version = "0.12", features = ["blocking", "json", "multipart"] }
 anyhow = "1.0"
 chrono = "0.4"
 serde_yaml = "0.9"

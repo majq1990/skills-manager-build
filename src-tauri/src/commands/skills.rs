@@ -735,6 +735,135 @@ pub async fn install_local(
     .await?
 }
 
+/// 安装企业技能：用全局登录态下载 zip → 校验 → 解压安装到中央库 → 入库 +
+/// 挂到当前场景并同步到各工具目录（复用本地安装 helper，与 install_local 一致）。
+#[tauri::command]
+pub async fn enterprise_install_skill(
+    app: tauri::AppHandle,
+    name: String,
+    version: String,
+    store: State<'_, Arc<SkillStore>>,
+) -> Result<(), AppError> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let outcome = enterprise_install_inner(&store, &name, &version);
+        log_install_outcome(&store, "enterprise", outcome.as_ref());
+        outcome.map(|_| ())
+    })
+    .await??;
+
+    // 安装企业 skill 成功后，确保 feedback-monitor 插件已部署到各 agent（幂等）
+    crate::commands::enterprise::deploy_feedback_from_app(&app);
+    Ok(())
+}
+
+/// 下载+安装一个企业 skill 的指定版本（供安装命令 + 自动更新复用）。
+/// 版本号存入 source_revision，供后续更新比较。返回 (skill_id, skill_name)。
+fn enterprise_install_inner(
+    store: &Arc<SkillStore>,
+    name: &str,
+    version: &str,
+) -> Result<(String, String), AppError> {
+    // 1. 下载企业技能 zip（全局 ENTERPRISE_API 内存 token）
+    let zip_bytes = crate::commands::enterprise::download_enterprise_zip(name, version)?;
+
+    // 2. 校验 ZIP magic（PK\x03\x04），防止把错误页/空响应当成包
+    if zip_bytes.len() < 4
+        || zip_bytes[0] != 0x50
+        || zip_bytes[1] != 0x4B
+        || zip_bytes[2] != 0x03
+        || zip_bytes[3] != 0x04
+    {
+        let preview = String::from_utf8_lossy(&zip_bytes[..zip_bytes.len().min(120)]).to_string();
+        return Err(AppError::internal(format!(
+            "下载内容不是有效 ZIP（可能是错误页）: {}",
+            preview
+        )));
+    }
+
+    // 3. 写临时 zip 文件
+    let temp_dir = tempfile::tempdir().map_err(AppError::io)?;
+    let zip_path = temp_dir.path().join("skill.zip");
+    std::fs::write(&zip_path, &zip_bytes).map_err(AppError::io)?;
+
+    // 4. 解压安装 + 入库 + 挂场景同步（与本地安装同路径）
+    let active = store.get_active_scenario_id().ok().flatten();
+    let metadata = InstallSourceMetadata {
+        source_type: "enterprise".to_string(),
+        source_ref: Some(name.to_string()),
+        source_ref_resolved: None,
+        source_subpath: None,
+        source_branch: None,
+        source_revision: Some(version.to_string()), // 记录已装版本，供更新比较
+        remote_revision: None,
+        update_status: "unknown".to_string(),
+    };
+    let _lock = RepoLock::acquire("install enterprise skill").map_err(AppError::db)?;
+    let result = installer::install_from_local(&zip_path, Some(name)).map_err(AppError::io)?;
+    let skill_name = result.name.clone();
+    let skill_id = store_installed_skill_unlocked(store, &result, &metadata, active.as_deref())?;
+    Ok((skill_id, skill_name))
+}
+
+/// 语义化版本比较：a > b ？（按 . 分段数值比较，非数字段回退字符串）
+fn version_gt(a: &str, b: &str) -> bool {
+    let parse = |s: &str| -> Vec<u64> {
+        s.split(|c| c == '.' || c == '-')
+            .map(|p| p.parse::<u64>().unwrap_or(0))
+            .collect()
+    };
+    let (va, vb) = (parse(a), parse(b));
+    for i in 0..va.len().max(vb.len()) {
+        let x = va.get(i).copied().unwrap_or(0);
+        let y = vb.get(i).copied().unwrap_or(0);
+        if x != y {
+            return x > y;
+        }
+    }
+    false
+}
+
+/// 自动更新已安装的企业 skill：拉服务端最新版本，逐个比较，较新则重装（重装会带插件部署）。
+/// 需登录后调用（依赖全局 ENTERPRISE_API token）。best-effort，失败只记日志。
+pub(crate) fn auto_update_enterprise_skills(store: &Arc<SkillStore>, app: &tauri::AppHandle) {
+    let latest = match crate::commands::enterprise::fetch_enterprise_versions() {
+        Ok(m) => m,
+        Err(e) => {
+            log::warn!("企业 skill 版本获取失败，跳过自动更新: {e}");
+            return;
+        }
+    };
+    // 写企业 skill 名单给反馈插件（作用域判定：只对名单内 skill 上报自动反馈）
+    crate::core::feedback_token::write_enterprise_list(&latest.keys().cloned().collect::<Vec<_>>());
+    let skills = match store.get_all_skills() {
+        Ok(s) => s,
+        Err(e) => {
+            log::warn!("读取本地 skill 失败，跳过自动更新: {e}");
+            return;
+        }
+    };
+    let mut updated = 0usize;
+    for sk in skills.iter().filter(|s| s.source_type == "enterprise") {
+        let Some(server_ver) = latest.get(&sk.name) else {
+            continue;
+        };
+        let installed = sk.source_revision.as_deref().unwrap_or("0.0.0");
+        if version_gt(server_ver, installed) {
+            match enterprise_install_inner(store, &sk.name, server_ver) {
+                Ok(_) => {
+                    updated += 1;
+                    log::info!("企业 skill 自动更新: {} {} -> {}", sk.name, installed, server_ver);
+                }
+                Err(e) => log::warn!("企业 skill 自动更新失败 {}: {}", sk.name, e),
+            }
+        }
+    }
+    if updated > 0 {
+        log::info!("企业 skill 自动更新完成 {} 个，重新部署插件", updated);
+        crate::commands::enterprise::deploy_feedback_from_app(app);
+    }
+}
+
 #[tauri::command]
 pub async fn install_git(
     repo_url: String,
@@ -2265,6 +2394,17 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::{tempdir, TempDir};
+
+    #[test]
+    fn version_gt_numeric_and_edges() {
+        assert!(version_gt("1.2.1", "1.2.0"));
+        assert!(version_gt("1.10.0", "1.9.0")); // 数值比较，非字符串
+        assert!(version_gt("2.0.0", "1.9.9"));
+        assert!(!version_gt("1.2.0", "1.2.0"));
+        assert!(!version_gt("1.0.0", "1.2.0"));
+        assert!(!version_gt("1.2", "1.2.0")); // 补零等价
+        assert!(version_gt("1.2.0", "0.0.0")); // 未装占位
+    }
 
     struct TestRepo {
         _lock: std::sync::MutexGuard<'static, ()>,

@@ -775,6 +775,8 @@ export interface EnterpriseLoginResponse {
     email: string;
     isAdmin: boolean;
   };
+  /** 当前用户可上传的可见性级别（"public"/"tech-manager"/"support" 的子集，空数组 = 无上传权限） */
+  uploadVisibilities: string[];
 }
 
 export const enterpriseLogin = (username: string, password: string) =>
@@ -797,3 +799,45 @@ export const enterpriseIsAuthenticated = () =>
 
 export const enterpriseLogout = () =>
   invoke<void>("enterprise_logout");
+
+export const enterpriseInstallSkill = (name: string, version: string) =>
+  invoke<void>("enterprise_install_skill", { name, version });
+
+export const enterpriseSubmitFeedback = (
+  feedbackType: string,
+  skill: string,
+  title: string,
+  description: string
+) =>
+  invoke<void>("enterprise_submit_feedback", {
+    feedbackType,
+    skill,
+    title,
+    description,
+  });
+
+export interface UploadResponse {
+  success: boolean;
+  /** 服务端发布后的版本号（留空上传时由服务端自动递增） */
+  version: string;
+  message: string;
+  /** "published" | "unsafe" 等 */
+  status: string;
+}
+
+/**
+ * 把本地技能（central_path 目录内容）打包上传/发布到企业服务器。
+ * version 留空 = 服务端自动递增；安全扫描不过会抛错（含服务端错误信息）。
+ */
+export const enterpriseUploadSkill = (
+  name: string,
+  centralPath: string,
+  version?: string,
+  visibility?: string
+) =>
+  invoke<UploadResponse>("enterprise_upload_skill", {
+    name,
+    centralPath,
+    version: version || null,
+    visibility: visibility || null,
+  });

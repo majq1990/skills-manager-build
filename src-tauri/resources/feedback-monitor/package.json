@@ -1,0 +1,12 @@
+{
+  "name": "feedback-monitor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "企业 skill 反馈监控插件 — 卡住/报错/手动三通道，跨 agent 适配（opencode 插件 + WorkBuddy CC-兼容 hooks）",
+  "author": "技术支持部",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "test:sanitize": "node core/sanitize.mjs --selftest"
+  }
+}

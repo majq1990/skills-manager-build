@@ -463,7 +463,7 @@
     "language": "Language",
     "help": "Help",
     "about": "About",
-    "version": "Skills Manager 1.22.6",
+    "version": "Skills Manager",
     "tagline": "Cross-platform. Minimal, efficient, seamless multi-preset switching.",
     "checkUpdate": "Check for Updates",
     "checking": "Checking…",
@@ -891,6 +891,53 @@
       }
     }
   },
+  "feedback": {
+    "title": "Feedback / Suggestion",
+    "typeLabel": "Type",
+    "typeSkillIssue": "Skill issue",
+    "typeToolIssue": "Tool issue",
+    "typeSuggestion": "Suggestion",
+    "relatedSkill": "Related skill",
+    "titleLabel": "Title",
+    "titlePlaceholder": "One line summarizing the issue or suggestion",
+    "descLabel": "Details",
+    "descPlaceholder": "Describe the scenario, steps to reproduce, or your suggestion",
+    "submit": "Submit",
+    "submitting": "Submitting…",
+    "success": "Feedback submitted, thank you!",
+    "failed": "Failed to submit feedback",
+    "required": "Title and details are required",
+    "needLogin": "Please sign in on the Enterprise Skills page first",
+    "feedbackBtn": "Feedback"
+  },
+  "publish": {
+    "title": "Publish to Enterprise",
+    "subtitle": "Upload and publish \"{{name}}\" to the enterprise skill server. A security scan runs before publishing.",
+    "skillLabel": "Skill",
+    "versionLabel": "Target version (optional)",
+    "versionPlaceholder": "Leave empty to auto-increment on the server",
+    "versionHint": "If left empty, the server assigns the next version automatically.",
+    "visibilityLabel": "Visibility",
+    "visibilityPublic": "Everyone",
+    "visibilityTechManager": "Tech Managers",
+    "visibilitySupport": "Support Dept",
+    "noUploadPermission": "You don't have upload permission",
+    "publish": "Publish",
+    "publishing": "Publishing…",
+    "success": "\"{{name}}\" published {{version}}",
+    "failed": "Publish failed",
+    "scanFailed": "Security scan failed",
+    "noPermission": "You don't have upload permission. Please contact an administrator.",
+    "needLogin": "Please sign in on the Enterprise Skills page first",
+    "batch": {
+      "title": "Publish {{count}} skills",
+      "toolbar": "Batch publish ({{count}})",
+      "start": "Start publishing {{count}} skills",
+      "progress": "Publishing {{current}}/{{total}}…",
+      "successCount": "{{count}} succeeded",
+      "errorCount": "{{count}} failed"
+    }
+  },
   "enterprise": {
     "title": "Enterprise Skills",
     "loginDescription": "Login with your Redmine account to access enterprise skills",
@@ -911,7 +958,16 @@
     "noResults": "No skills match your search",
     "noSkills": "No enterprise skills available",
     "clearFilters": "Clear Filters",
-    "supportDept": "Support Dept"
+    "supportDept": "Support Dept",
+    "loginConnError": "Cannot reach the enterprise skill server. Check your network or server address (Settings → Enterprise Server).",
+    "loginServerError": "Unexpected server response, please contact your administrator.",
+    "install": "Install",
+    "installing": "Installing…",
+    "installed": "Installed",
+    "installFailed": "Install failed",
+    "alreadyInstalled": "Installed",
+    "update": "Update",
+    "updateHint": "Already installed locally. Click to reinstall / update to the latest enterprise version."
   },
   "mcp": {
     "market": {

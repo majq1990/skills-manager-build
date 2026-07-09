@@ -10,6 +10,7 @@ import {
   LogOut,
   Shield,
   RefreshCw,
+  CheckCircle2,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -17,9 +18,11 @@ import { cn } from "../utils";
 import * as api from "../lib/tauri";
 import type { EnterpriseSkill } from "../lib/tauri";
 import { DetailSheet } from "../components/DetailSheet";
+import { useApp } from "../context/AppContext";
 
 export function EnterpriseMarket() {
   const { t } = useTranslation();
+  const { setEnterpriseUploadVisibilities } = useApp();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [loading, setLoading] = useState(false);
   const [skills, setSkills] = useState<EnterpriseSkill[]>([]);
@@ -33,6 +36,9 @@ export function EnterpriseMarket() {
   const [password, setPassword] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
   const [selectedSkill, setSelectedSkill] = useState<EnterpriseSkill | null>(null);
+  const [installing, setInstalling] = useState<Set<string>>(new Set());
+  // 本地已安装技能名（归一化小写），用于把企业市场里"本地已有"的技能标成已安装/更新
+  const [installedNames, setInstalledNames] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     checkAuth();
@@ -45,6 +51,7 @@ export function EnterpriseMarket() {
       if (authed) {
         loadSkills();
         loadTags();
+        loadInstalled();
       }
     } catch {
       setIsAuthenticated(false);
@@ -73,6 +80,15 @@ export function EnterpriseMarket() {
     }
   };
 
+  // 拉本地受管技能名集合（企业安装走的就是入受管库，所以这是"已安装"的权威来源）
+  const loadInstalled = async () => {
+    try {
+      const managed = await api.getManagedSkills();
+      setInstalledNames(new Set(managed.map((s) => s.name.trim().toLowerCase())));
+    } catch {
+    }
+  };
+
   const handleLogin = async () => {
     if (!username || !password) {
       toast.error(t("enterprise.loginRequired"));
@@ -86,14 +102,48 @@ export function EnterpriseMarket() {
         setShowLogin(false);
         setUsername("");
         setPassword("");
+        // 把当前用户可上传的可见性级别存入全局态，供发布对话框读取
+        setEnterpriseUploadVisibilities(result.uploadVisibilities ?? []);
         toast.success(t("enterprise.loginSuccess"));
         loadSkills();
         loadTags();
+        loadInstalled();
       }
     } catch (err) {
-      toast.error(t("enterprise.loginFailed"));
+      // 后端错误分类：连接失败 / 凭证错(401) / 服务器响应异常，避免一律误报为"账号密码错误"
+      const msg = String((err as any)?.message ?? err ?? "");
+      if (/connect|dns|timed out|timeout|tcp|network|refused/i.test(msg)) {
+        toast.error(t("enterprise.loginConnError"));
+      } else if (/\(401\)|invalid username or password|authentication failed/i.test(msg)) {
+        toast.error(t("enterprise.loginFailed"));
+      } else if (/parse|deserialize|missing field|invalid type/i.test(msg)) {
+        toast.error(t("enterprise.loginServerError"));
+      } else {
+        toast.error(t("enterprise.loginFailed"));
+      }
     } finally {
       setLoginLoading(false);
+    }
+  };
+
+  const handleInstall = async (e: React.MouseEvent, skill: EnterpriseSkill) => {
+    e.stopPropagation(); // 阻止冒泡到卡片，避免点安装却打开详情
+    if (installing.has(skill.name)) return;
+    setInstalling((prev) => new Set(prev).add(skill.name));
+    try {
+      await api.enterpriseInstallSkill(skill.name, skill.version);
+      toast.success(`${skill.name} ${t("enterprise.installed")}`);
+      // 装好后即时标记为已安装（无需等下次刷新）
+      setInstalledNames((prev) => new Set(prev).add(skill.name.trim().toLowerCase()));
+    } catch (err) {
+      const msg = String((err as any)?.message ?? err ?? "");
+      toast.error(`${skill.name} ${t("enterprise.installFailed")}: ${msg}`);
+    } finally {
+      setInstalling((prev) => {
+        const next = new Set(prev);
+        next.delete(skill.name);
+        return next;
+      });
     }
   };
 
@@ -104,6 +154,7 @@ export function EnterpriseMarket() {
       setSkills([]);
       setAllTags([]);
       setSelectedTags(new Set());
+      setEnterpriseUploadVisibilities([]);
       toast.success(t("enterprise.logoutSuccess"));
     } catch {
       toast.error(t("enterprise.logoutFailed"));
@@ -242,6 +293,7 @@ export function EnterpriseMarket() {
             onClick={() => {
               loadSkills();
               loadTags();
+              loadInstalled();
             }}
             className="p-2 rounded-lg hover:bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)]"
             title={t("common.refresh")}
@@ -385,6 +437,38 @@ export function EnterpriseMarket() {
                       </span>
                     )}
                   </div>
+                  {(() => {
+                    const isBusy = installing.has(skill.name);
+                    const isInstalled = installedNames.has(
+                      skill.name.trim().toLowerCase()
+                    );
+                    return (
+                      <button
+                        onClick={(e) => handleInstall(e, skill)}
+                        disabled={isBusy}
+                        title={isInstalled ? t("enterprise.updateHint") : undefined}
+                        className={cn(
+                          "shrink-0 flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded transition-opacity disabled:opacity-60",
+                          isInstalled
+                            ? "border border-[var(--color-border)] text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]"
+                            : "bg-[var(--color-accent)] text-white hover:opacity-90"
+                        )}
+                      >
+                        {isBusy ? (
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                        ) : isInstalled ? (
+                          <CheckCircle2 className="w-3 h-3 text-green-500" />
+                        ) : (
+                          <Download className="w-3 h-3" />
+                        )}
+                        {isBusy
+                          ? t("enterprise.installing")
+                          : isInstalled
+                          ? t("enterprise.alreadyInstalled")
+                          : t("enterprise.install")}
+                      </button>
+                    );
+                  })()}
                 </div>
               </div>
             ))}

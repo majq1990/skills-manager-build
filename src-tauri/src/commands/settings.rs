@@ -155,8 +155,9 @@ pub async fn check_app_update(
         // 不再查上游 GitHub releases（xingkongliang/skills-manager），避免拉到社区版本号。
         const UPDATE_MANIFEST_URL: &str =
             "https://demo.egova.com.cn/MediaRoot/skill-manager/latest.json";
+        // 指向 download.html（目录 URL 禁列目录会 403）
         const UPDATE_DOWNLOAD_PAGE: &str =
-            "https://demo.egova.com.cn/MediaRoot/skill-manager/";
+            "https://demo.egova.com.cn/MediaRoot/skill-manager/download.html";
 
         let resp: serde_json::Value = client
             .get(UPDATE_MANIFEST_URL)

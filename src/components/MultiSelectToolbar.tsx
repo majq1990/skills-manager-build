@@ -1,4 +1,4 @@
-import { Trash2, CheckCircle2, Circle, RotateCcw, Tag, Download, Upload } from "lucide-react";
+import { Trash2, CheckCircle2, Circle, RotateCcw, Tag, Download, Upload, UploadCloud } from "lucide-react";
 import { cn } from "../utils";
 
 interface MultiSelectToolbarLabels {
@@ -14,6 +14,7 @@ interface MultiSelectToolbarLabels {
   deselectAll: string;
   cancel: string;
   editTags?: string;
+  publish?: string;
 }
 
 interface MultiSelectToolbarProps {
@@ -36,6 +37,7 @@ interface MultiSelectToolbarProps {
   onSelectAll: () => void;
   onCancel: () => void;
   onEditTags?: () => void;
+  onPublish?: () => void;
 }
 
 export function MultiSelectToolbar({
@@ -58,6 +60,7 @@ export function MultiSelectToolbar({
   onSelectAll,
   onCancel,
   onEditTags,
+  onPublish,
 }: MultiSelectToolbarProps) {
   return (
     <div className="flex items-center gap-2 px-1 py-1.5">
@@ -103,6 +106,15 @@ export function MultiSelectToolbar({
             >
               <Tag className="h-3.5 w-3.5" />
               {labels.editTags}
+            </button>
+          )}
+          {onPublish && labels.publish && (
+            <button
+              onClick={onPublish}
+              className="inline-flex items-center gap-1.5 rounded-md bg-teal-600/90 px-2.5 py-1 text-[13px] font-medium text-white hover:bg-teal-500 transition-colors"
+            >
+              <UploadCloud className="h-3.5 w-3.5" />
+              {labels.publish}
             </button>
           )}
           <button

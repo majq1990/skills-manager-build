@@ -21,6 +21,8 @@ import {
   Square,
   GripVertical,
   CircleSlash,
+  MessageSquarePlus,
+  UploadCloud,
 } from "lucide-react";
 import { open as dialogOpen } from "@tauri-apps/plugin-dialog";
 import { useTranslation } from "react-i18next";
@@ -30,6 +32,9 @@ import { useApp } from "../context/AppContext";
 import { useMultiSelect } from "../hooks/useMultiSelect";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { DeleteSkillButton } from "../components/DeleteSkillButton";
+import { FeedbackDialog } from "../components/FeedbackDialog";
+import { PublishDialog } from "../components/PublishDialog";
+import { BatchPublishDialog } from "../components/BatchPublishDialog";
 import { SkillDetailPanel } from "../components/SkillDetailPanel";
 import { MultiSelectToolbar } from "../components/MultiSelectToolbar";
 import { BatchTagDialog } from "../components/BatchTagDialog";
@@ -148,6 +153,12 @@ export function MySkills() {
   const refreshAfterDeleteRef = useRef<number | null>(null);
   const [batchDeleteConfirm, setBatchDeleteConfirm] = useState(false);
   const [batchTagDialogOpen, setBatchTagDialogOpen] = useState(false);
+  // 技能反馈弹窗：被反馈的技能（null=关闭）
+  const [feedbackSkill, setFeedbackSkill] = useState<ManagedSkill | null>(null);
+  // 发布到企业弹窗：被发布的技能（null=关闭）
+  const [publishSkill, setPublishSkill] = useState<ManagedSkill | null>(null);
+  // 批量发布弹窗开关
+  const [batchPublishOpen, setBatchPublishOpen] = useState(false);
   const [checkingAll, setCheckingAll] = useState(false);
   const [checkingSkillId, setCheckingSkillId] = useState<string | null>(null);
   const [updatingSkillId, setUpdatingSkillId] = useState<string | null>(null);
@@ -1410,6 +1421,7 @@ export function MySkills() {
             deselectAll: t("mySkills.deselectAll"),
             cancel: t("common.cancel"),
             editTags: t("mySkills.batchEditTags", { count: selectedIds.size }),
+            publish: t("publish.batch.toolbar", { count: selectedIds.size }),
           }}
           onUpdate={handleBatchRefresh}
           onDelete={() => setBatchDeleteConfirm(true)}
@@ -1417,6 +1429,7 @@ export function MySkills() {
           onSelectAll={handleSelectAll}
           onCancel={exitMultiSelect}
           onEditTags={() => setBatchTagDialogOpen(true)}
+          onPublish={() => setBatchPublishOpen(true)}
         />
       )}
 
@@ -1543,6 +1556,20 @@ export function MySkills() {
                         <RotateCcw className={cn("h-3.5 w-3.5", updatingSkillId === skill.id && "animate-spin")} />
                       </button>
                     ) : null}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setFeedbackSkill(skill); }}
+                      className="rounded p-1 text-muted transition-colors hover:bg-surface-hover hover:text-secondary"
+                      title={t("feedback.title")}
+                    >
+                      <MessageSquarePlus className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setPublishSkill(skill); }}
+                      className="rounded p-1 text-muted transition-colors hover:bg-surface-hover hover:text-secondary"
+                      title={t("publish.title")}
+                    >
+                      <UploadCloud className="h-3.5 w-3.5" />
+                    </button>
                     <DeleteSkillButton
                       skill={skill}
                       onConfirm={handleDeleteSkill}
@@ -1853,6 +1880,20 @@ export function MySkills() {
                       <RotateCcw className={cn("h-3.5 w-3.5", updatingSkillId === skill.id && "animate-spin")} />
                     </button>
                   ) : null}
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setFeedbackSkill(skill); }}
+                    className="rounded p-0.5 text-muted transition-colors hover:bg-surface-hover hover:text-secondary"
+                    title={t("feedback.title")}
+                  >
+                    <MessageSquarePlus className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setPublishSkill(skill); }}
+                    className="rounded p-0.5 text-muted transition-colors hover:bg-surface-hover hover:text-secondary"
+                    title={t("publish.title")}
+                  >
+                    <UploadCloud className="h-3.5 w-3.5" />
+                  </button>
                   <DeleteSkillButton
                     skill={skill}
                     onConfirm={handleDeleteSkill}
@@ -1893,6 +1934,25 @@ export function MySkills() {
         allTags={allTags}
         onClose={() => setBatchTagDialogOpen(false)}
         onApply={handleBatchEditTags}
+      />
+      <FeedbackDialog
+        open={!!feedbackSkill}
+        defaultType="技能问题"
+        skill={feedbackSkill?.name}
+        onClose={() => setFeedbackSkill(null)}
+      />
+      <PublishDialog
+        open={!!publishSkill}
+        skillName={publishSkill?.name}
+        centralPath={publishSkill?.central_path}
+        onClose={() => setPublishSkill(null)}
+      />
+      <BatchPublishDialog
+        open={batchPublishOpen}
+        skills={skills
+          .filter((s) => selectedIds.has(s.id))
+          .map((s) => ({ id: s.id, name: s.name, central_path: s.central_path }))}
+        onClose={() => setBatchPublishOpen(false)}
       />
       <ConfirmDialog
         open={restoreVersionTag !== null}

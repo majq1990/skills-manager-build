@@ -20,6 +20,10 @@ interface AppState {
   appError: string | null;
   helpOpen: boolean;
   detailSkillId: string | null;
+  /** 当前企业登录用户可上传的可见性级别（"public"/"tech-manager"/"support" 的子集，空 = 无上传权限）。
+   *  登录成功时由 EnterpriseMarket 写入，PublishDialog/BatchPublishDialog 读取以渲染可见性下拉。 */
+  enterpriseUploadVisibilities: string[];
+  setEnterpriseUploadVisibilities: (vis: string[]) => void;
   refreshAppData: () => Promise<void>;
   refreshPresets: () => Promise<void>;
   refreshTools: () => Promise<void>;
@@ -36,6 +40,7 @@ interface AppState {
 
 const VIEWED_PRESET_LS_KEY = "skills-manager.viewedPresetId";
 const LEGACY_VIEWED_PRESET_LS_KEY = "skills-manager.viewedScenarioId";
+const ENTERPRISE_UPLOAD_VIS_LS_KEY = "skills-manager.enterpriseUploadVisibilities";
 
 const AppContext = createContext<AppState | null>(null);
 
@@ -57,6 +62,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [appError, setAppError] = useState<string | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
   const [detailSkillId, setDetailSkillId] = useState<string | null>(null);
+  const [enterpriseUploadVisibilities, setEnterpriseUploadVisibilitiesState] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem(ENTERPRISE_UPLOAD_VIS_LS_KEY);
+      const parsed = raw ? JSON.parse(raw) : null;
+      return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === "string") : [];
+    } catch {
+      return [];
+    }
+  });
   const autoCheckInFlightRef = useRef(false);
   const lastUpdateNotificationRef = useRef<string | null>(null);
   const lastActivePresetIdRef = useRef<string | null>(null);
@@ -139,6 +153,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     await Promise.all([refreshPresets(), refreshTools(), refreshManagedSkills(), refreshProjects()]);
     setLoading(false);
   }, [refreshManagedSkills, refreshProjects, refreshPresets, refreshTools]);
+
+  const setEnterpriseUploadVisibilities = useCallback((vis: string[]) => {
+    setEnterpriseUploadVisibilitiesState(vis);
+    try {
+      localStorage.setItem(ENTERPRISE_UPLOAD_VIS_LS_KEY, JSON.stringify(vis));
+    } catch {
+      // localStorage may be unavailable; selection is still tracked in memory.
+    }
+  }, []);
 
   const setViewedPresetId = useCallback((id: string) => {
     setViewedPresetIdState(id);
@@ -378,6 +401,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         appError,
         helpOpen,
         detailSkillId,
+        enterpriseUploadVisibilities,
+        setEnterpriseUploadVisibilities,
         refreshAppData,
         refreshPresets,
         refreshTools,
