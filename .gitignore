@@ -35,29 +35,25 @@ dist-ssr
 docs
 reference
 CLAUDE.md
+.loop-log
+.omc
 
-# Rust / Tauri build output
-src-tauri/target/
-target/
-**/*.rs.bk
+# Build cache (large binaries - upload to server directly)
+build-cache/
 
-# Internal training materials (企业内部培训资料，不推公网)
-training/
-
-# Office lock files
-~$*.docx
-~$*.pptx
-~$*.xlsx
-
-# Tauri updater signing keys — NEVER commit
-.tauri/
+# Tauri signing keys (keep local only)
 signer.key
 signer.key.pub
 signer.key.bak.*
 signer.key.pub.bak.*
 
-# Local build artifacts cache (used by scripts/release.sh)
-build-cache/
+# Training generated docs
+training/*.docx
+training/*.pptx
+training/*.pdf
+training/*.py
+training/*.bat
+training/*.ps1
+training/*.md
+training/截屏*.png
 
-# Claude / agent metadata
-.omc/

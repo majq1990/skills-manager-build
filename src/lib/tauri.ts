@@ -2,6 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 
 // ── Types ──
 
+export type ToolCategory = "coding" | "lobster";
+
 export interface ToolInfo {
   key: string;
   display_name: string;
@@ -10,6 +12,8 @@ export interface ToolInfo {
   enabled: boolean;
   is_custom: boolean;
   has_path_override: boolean;
+  project_relative_skills_dir: string | null;
+  category: ToolCategory;
 }
 
 export interface ManagedSkill {
@@ -18,6 +22,9 @@ export interface ManagedSkill {
   description: string | null;
   source_type: string;
   source_ref: string | null;
+  source_ref_resolved: string | null;
+  source_subpath: string | null;
+  source_branch: string | null;
   source_revision: string | null;
   remote_revision: string | null;
   update_status: string;
@@ -29,7 +36,7 @@ export interface ManagedSkill {
   updated_at: number;
   status: string;
   targets: SkillTarget[];
-  scenario_ids: string[];
+  preset_ids: string[];
   tags: string[];
 }
 
@@ -42,6 +49,80 @@ export interface SkillTarget {
   status: string;
   synced_at: number | null;
 }
+
+export interface MemoryItem {
+  slug: string;
+  skill_name: string;
+  description: string;
+  source_path: string;
+  memory_type: string;
+}
+
+export interface MemorySourceReport {
+  agent: string;
+  path: string;
+  files: number;
+}
+
+export interface MemoryReconcileReport {
+  shared_root: string;
+  sources: MemorySourceReport[];
+  discovered: number;
+  imported: number;
+  replaced_newer: number;
+  deduplicated: number;
+  ignored_older: number;
+  backups: number;
+  errors: string[];
+  dry_run: boolean;
+}
+
+export interface MemoryToolReport {
+  tool_key: string;
+  display_name: string;
+  skills_dir: string;
+  adapter: string;
+  deployed: number;
+  removed: number;
+  skipped: boolean;
+  reason: string | null;
+  error: string | null;
+}
+
+export interface MemorySyncReport {
+  shared_root: string;
+  shared_root_exists: boolean;
+  memory_count: number;
+  memories: MemoryItem[];
+  tools_installed: number;
+  tools: MemoryToolReport[];
+  dry_run: boolean;
+  reconcile: MemoryReconcileReport;
+}
+
+export interface SavedMemory {
+  path: string;
+  slug: string;
+  created: boolean;
+}
+
+export const memoryGetStatus = () => invoke<MemorySyncReport>("memory_get_status");
+export const memorySync = () => invoke<MemorySyncReport>("memory_sync");
+export const memoryMigrate = (dryRun: boolean) =>
+  invoke<MemoryReconcileReport>("memory_migrate", { dryRun });
+export const memoryRemember = (
+  title: string,
+  description: string,
+  content: string,
+  memoryType: string,
+  sourceAgent?: string,
+) => invoke<SavedMemory>("memory_remember", {
+  title,
+  description,
+  content,
+  memoryType,
+  sourceAgent: sourceAgent || null,
+});
 
 export interface SkillToolToggle {
   tool: string;
@@ -58,7 +139,39 @@ export interface SkillDocument {
   central_path: string;
 }
 
-export interface Scenario {
+export interface SourceSkillDocument {
+  skill_id: string;
+  filename: string;
+  content: string;
+  source_label: string;
+  revision: string;
+}
+
+export type SkillSourceDiffStatus = "added" | "removed" | "modified";
+export type SkillSourceDiffContentKind =
+  | "text"
+  | "binary"
+  | "too_large"
+  | "permission_only";
+
+export interface SkillSourceDiffEntry {
+  relative_path: string;
+  status: SkillSourceDiffStatus;
+  content_kind: SkillSourceDiffContentKind;
+  original_text: string | null;
+  updated_text: string | null;
+  executable_before: boolean;
+  executable_after: boolean;
+}
+
+export interface SkillSourceDiff {
+  skill_id: string;
+  source_label: string;
+  revision: string;
+  entries: SkillSourceDiffEntry[];
+}
+
+export interface Preset {
   id: string;
   name: string;
   description: string | null;
@@ -91,23 +204,47 @@ export interface SkillsShSkill {
   installs: number;
 }
 
+export interface SyncHealth {
+  in_sync: number;
+  project_newer: number;
+  center_newer: number;
+  diverged: number;
+  project_only: number;
+}
+
 export interface Project {
   id: string;
   name: string;
   path: string;
+  workspace_type: "project" | "linked";
+  linked_agent_name: string | null;
+  supports_skill_toggle: boolean;
   sort_order: number;
   skill_count: number;
+  sync_health: SyncHealth;
   created_at: number;
   updated_at: number;
+}
+
+export interface ProjectAgentTarget {
+  key: string;
+  display_name: string;
+  enabled: boolean;
+  installed: boolean;
+  is_custom: boolean;
 }
 
 export interface ProjectSkill {
   name: string;
   dir_name: string;
+  relative_path: string;
   description: string | null;
   path: string;
   files: string[];
   enabled: boolean;
+  agent: string;
+  agent_display_name: string;
+  tags: string[];
   in_center: boolean;
   sync_status: "project_only" | "in_sync" | "project_newer" | "center_newer" | "diverged";
   center_skill_id: string | null;
@@ -129,14 +266,38 @@ export const setToolEnabled = (key: string, enabled: boolean) =>
 export const setAllToolsEnabled = (enabled: boolean) =>
   invoke<void>("set_all_tools_enabled", { enabled });
 
+export const getToolOrder = () => invoke<string[]>("get_tool_order_cmd");
+
+export const setToolOrder = (order: string[]) =>
+  invoke<void>("set_tool_order_cmd", { order });
+
 export const setCustomToolPath = (key: string, path: string) =>
   invoke<void>("set_custom_tool_path", { key, path });
 
 export const resetCustomToolPath = (key: string) =>
   invoke<void>("reset_custom_tool_path", { key });
 
-export const addCustomTool = (key: string, displayName: string, skillsDir: string) =>
-  invoke<void>("add_custom_tool", { key, displayName, skillsDir });
+export const setCustomToolProjectPath = (
+  key: string,
+  projectRelativeSkillsDir: string | null,
+) =>
+  invoke<void>("set_custom_tool_project_path", {
+    key,
+    projectRelativeSkillsDir,
+  });
+
+export const addCustomTool = (
+  key: string,
+  displayName: string,
+  skillsDir: string,
+  projectRelativeSkillsDir?: string,
+) =>
+  invoke<void>("add_custom_tool", {
+    key,
+    displayName,
+    skillsDir,
+    projectRelativeSkillsDir: projectRelativeSkillsDir ?? null,
+  });
 
 export const removeCustomTool = (key: string) =>
   invoke<void>("remove_custom_tool", { key });
@@ -146,16 +307,30 @@ export const removeCustomTool = (key: string) =>
 export const getManagedSkills = () =>
   invoke<ManagedSkill[]>("get_managed_skills");
 
-export const getSkillsForScenario = (scenarioId: string) =>
-  invoke<ManagedSkill[]>("get_skills_for_scenario", {
-    scenarioId,
+export const getSkillsForPreset = (presetId: string) =>
+  invoke<ManagedSkill[]>("get_skills_for_preset", {
+    presetId,
   });
 
 export const getSkillDocument = (skillId: string) =>
   invoke<SkillDocument>("get_skill_document", { skillId });
 
+export const getSourceSkillDocument = (skillId: string) =>
+  invoke<SourceSkillDocument>("get_source_skill_document", { skillId });
+
+export const getSkillSourceDiff = (skillId: string) =>
+  invoke<SkillSourceDiff>("get_skill_source_diff", { skillId });
+
 export const deleteManagedSkill = (skillId: string) =>
   invoke<void>("delete_managed_skill", { skillId });
+
+export interface BatchDeleteSkillsResult {
+  deleted: number;
+  failed: string[];
+}
+
+export const deleteManagedSkills = (skillIds: string[]) =>
+  invoke<BatchDeleteSkillsResult>("delete_managed_skills", { skillIds });
 
 export const installLocal = (sourcePath: string, name?: string) =>
   invoke<void>("install_local", { sourcePath, name: name || null });
@@ -164,7 +339,8 @@ export const installGit = (repoUrl: string, name?: string) =>
   invoke<void>("install_git", { repoUrl, name: name || null });
 
 export interface GitSkillPreview {
-  dir_name: string;
+  /** Path relative to the resolved scan root, using `/` separators. Stable key. */
+  rel_path: string;
   name: string;
   description: string | null;
 }
@@ -175,7 +351,7 @@ export interface GitPreviewResult {
 }
 
 export interface SkillInstallItem {
-  dir_name: string;
+  rel_path: string;
   name: string;
 }
 
@@ -205,11 +381,32 @@ export const checkAllSkillUpdates = (force?: boolean) =>
     force: force ?? false,
   });
 
+export interface UpdateSkillResult {
+  skill: ManagedSkill;
+  /** False when a monorepo commit didn't touch this skill's subdirectory. */
+  content_changed: boolean;
+}
+
 export const updateSkill = (skillId: string) =>
-  invoke<ManagedSkill>("update_skill", { skillId });
+  invoke<UpdateSkillResult>("update_skill", { skillId });
+
+export interface BatchUpdateSkillsResult {
+  refreshed: number;
+  unchanged: number;
+  failed: string[];
+}
+
+export const batchUpdateSkills = (skillIds: string[]) =>
+  invoke<BatchUpdateSkillsResult>("batch_update_skills", { skillIds });
 
 export const reimportLocalSkill = (skillId: string) =>
   invoke<ManagedSkill>("reimport_local_skill", { skillId });
+
+export const relinkLocalSkillSource = (skillId: string, sourcePath: string) =>
+  invoke<ManagedSkill>("relink_local_skill_source", { skillId, sourcePath });
+
+export const detachLocalSkillSource = (skillId: string) =>
+  invoke<ManagedSkill>("detach_local_skill_source", { skillId });
 
 export interface BatchImportResult {
   imported: number;
@@ -233,23 +430,20 @@ export const syncSkillToTool = (skillId: string, tool: string) =>
 export const unsyncSkillFromTool = (skillId: string, tool: string) =>
   invoke<void>("unsync_skill_from_tool", { skillId, tool });
 
-export const getSkillToolToggles = (skillId: string, scenarioId: string) =>
-  invoke<SkillToolToggle[]>("get_skill_tool_toggles", { skillId, scenarioId });
+export const getSkillToolToggles = (skillId: string, presetId: string) =>
+  invoke<SkillToolToggle[]>("get_skill_tool_toggles", { skillId, presetId });
 
 export const setSkillToolToggle = (
   skillId: string,
-  scenarioId: string,
+  presetId: string,
   tool: string,
   enabled: boolean
 ) =>
-  invoke<void>("set_skill_tool_toggle", { skillId, scenarioId, tool, enabled });
+  invoke<void>("set_skill_tool_toggle", { skillId, presetId, tool, enabled });
 
 // ── Scan ──
 
 export const scanLocalSkills = () => invoke<ScanResult>("scan_local_skills");
-
-export const getDiscoveredGroups = () =>
-  invoke<ScanResult>("get_discovered_groups");
 
 export const importExistingSkill = (sourcePath: string, name?: string) =>
   invoke<void>("import_existing_skill", { sourcePath, name: name || null });
@@ -268,123 +462,6 @@ export const searchSkillssh = (query: string, limit?: number) =>
     limit: limit ?? null,
   });
 
-export const searchSkillsmp = (
-  query: string,
-  ai?: boolean,
-  page?: number,
-  limit?: number,
-) =>
-  invoke<SkillsShSkill[]>("search_skillsmp", {
-    query,
-    ai: ai ?? null,
-    page: page ?? null,
-    limit: limit ?? null,
-  });
-
-// ── MCP Market ──
-
-export interface McpServer {
-  name: string;
-  description?: string;
-  version: string;
-  website_url?: string;
-  repository?: {
-    url: string;
-    source: string;
-  };
-  remotes: Array<{
-    type: string;
-    url: string;
-  }>;
-}
-
-export interface DomesticMcpServer {
-  id: string;
-  name: string;
-  description: string;
-  provider: "aliyun" | "bytedance" | "tencent" | "dingtalk" | "gitee";
-  url: string;
-  category: string;
-  installs: number;
-}
-
-export interface McpProvider {
-  id: string;
-  name: string;
-  icon: string;
-}
-
-export const searchMcpRegistry = (query: string, limit?: number) =>
-  invoke<McpServer[]>("search_mcp_registry", { query, limit: limit ?? null });
-
-export const listMcpRegistry = (page?: number, perPage?: number) =>
-  invoke<McpServer[]>("list_mcp_registry", { page: page ?? null, per_page: perPage ?? null });
-
-export const searchDomesticMcp = (query: string) =>
-  invoke<DomesticMcpServer[]>("search_domestic_mcp", { query });
-
-export const listDomesticMcp = (provider?: string) =>
-  invoke<DomesticMcpServer[]>("list_domestic_mcp", { provider: provider ?? null });
-
-export const listDomesticMcpProviders = () =>
-  invoke<McpProvider[]>("list_domestic_mcp_providers");
-
-export const searchTopMcp = (query: string, limit?: number) =>
-  invoke<DomesticMcpServer[]>("search_top_mcp", { query, limit: limit ?? null });
-
-// ── Gitee Search ──
-
-export const searchGiteeSkills = (query: string, limit?: number) =>
-  invoke<DomesticMcpServer[]>("search_gitee_skills", { query, limit: limit ?? null });
-
-export const fetchGiteeTrending = (limit?: number) =>
-  invoke<DomesticMcpServer[]>("fetch_gitee_trending", { limit: limit ?? null });
-
-// ── MCP Install ──
-
-export const installDomesticMcp = (serverId: string, provider: string) =>
-  invoke<void>("install_domestic_mcp", { serverId, provider });
-
-export interface DomesticMcpInstallResult {
-  server_name: string;
-  written_targets: string[];
-  skipped_targets: string[];
-  config_snippet: string;
-  server_key: string;
-}
-
-export const installDomesticMcpDirect = (serverId: string) =>
-  invoke<DomesticMcpInstallResult>("install_domestic_mcp_direct", { serverId });
-
-export const installRegistryMcp = (serverName: string) =>
-  invoke<string>("install_registry_mcp", { serverName });
-
-// ── SkillHub.cn ──
-
-export interface SkillHubSkill {
-  id: string;
-  name: string;
-  description?: string;
-  author?: string;
-  version?: string;
-  tags: string[];
-  installs: number;
-  source_url?: string;
-  download_url?: string;
-}
-
-export const searchSkillhub = (query: string, limit?: number) =>
-  invoke<SkillHubSkill[]>("search_skillhub", { query, limit: limit ?? null });
-
-export const listSkillhubTrending = (limit?: number) =>
-  invoke<SkillHubSkill[]>("list_skillhub_trending", { limit: limit ?? null });
-
-export const getSkillhubSkill = (skillId: string) =>
-  invoke<SkillHubSkill>("get_skillhub_skill", { skillId });
-
-export const installSkillhubSkill = (skillId: string) =>
-  invoke<string>("install_skillhub_skill", { skillId });
-
 // ── Settings ──
 
 export const getSettings = (key: string) =>
@@ -395,6 +472,12 @@ export const setSettings = (key: string, value: string) =>
 
 export const getCentralRepoPath = () =>
   invoke<string>("get_central_repo_path");
+
+export const getCentralRepoPathOverride = () =>
+  invoke<string | null>("get_central_repo_path_override");
+
+export const setCentralRepoPath = (path?: string | null) =>
+  invoke<string>("set_central_repo_path", { path: path ?? null });
 
 export const appExit = () => invoke<void>("app_exit");
 
@@ -413,7 +496,64 @@ export interface AppUpdateInfo {
 export const checkAppUpdate = () =>
   invoke<AppUpdateInfo>("check_app_update");
 
+export interface DiagnosticInfo {
+  app_version: string;
+  os: string;
+  os_version: string;
+  arch: string;
+  central_repo_path: string;
+  central_repo_path_overridden: boolean;
+}
+
+export const getDiagnosticInfo = () =>
+  invoke<DiagnosticInfo>("get_diagnostic_info");
+
+export interface LogExcerpt {
+  log_path: string;
+  excerpt: string;
+  line_count: number;
+  has_warnings: boolean;
+}
+
+export const getRecentLogExcerpt = () =>
+  invoke<LogExcerpt>("get_recent_log_excerpt");
+
+export interface LogExportResult {
+  zip_path: string;
+  file_count: number;
+}
+
+export const exportLogsZip = () =>
+  invoke<LogExportResult>("export_logs_zip");
+
+export interface PanicInfo {
+  timestamp: string;
+  message: string;
+}
+
+export const checkLastPanic = () =>
+  invoke<PanicInfo | null>("check_last_panic");
+
+export const clearLastPanic = () =>
+  invoke<void>("clear_last_panic");
+
+/**
+ * Diagnostic-only: write a named startup event with elapsed ms (from
+ * performance.timeOrigin) into the backend log file. Used to correlate
+ * WebView2 boot and frontend boot timing with Rust-side startup logs
+ * when debugging slow launches (see issue #153).
+ */
+export const logStartupEvent = (label: string, elapsedMs: number) =>
+  invoke<void>("log_startup_event", { label, elapsedMs: Math.round(elapsedMs) });
+
 // ── Git Backup ──
+
+export type GitUpstreamHealth =
+  | "healthy"
+  | "no_remote"
+  | "no_upstream"
+  | "unrelated_histories"
+  | "detached";
 
 export interface GitBackupStatus {
   is_repo: boolean;
@@ -426,6 +566,7 @@ export interface GitBackupStatus {
   last_commit_time: string | null;
   current_snapshot_tag: string | null;
   restored_from_tag: string | null;
+  upstream_health: GitUpstreamHealth;
 }
 
 export interface GitBackupVersion {
@@ -437,6 +578,8 @@ export interface GitBackupVersion {
 
 export const gitBackupStatus = () =>
   invoke<GitBackupStatus>("git_backup_status");
+
+export const gitBackupFetch = () => invoke<void>("git_backup_fetch");
 
 export const gitBackupInit = () => invoke<void>("git_backup_init");
 
@@ -453,6 +596,9 @@ export const gitBackupPull = () => invoke<void>("git_backup_pull");
 export const gitBackupClone = (url: string) =>
   invoke<void>("git_backup_clone", { url });
 
+export const gitBackupReclone = (url: string) =>
+  invoke<void>("git_backup_reclone", { url });
+
 export const gitBackupCreateSnapshot = () =>
   invoke<string>("git_backup_create_snapshot");
 
@@ -464,56 +610,60 @@ export const gitBackupListVersions = (limit?: number) =>
 export const gitBackupRestoreVersion = (tag: string) =>
   invoke<void>("git_backup_restore_version", { tag });
 
-// ── Scenarios ──
+// ── Presets ──
 
-export const getScenarios = () => invoke<Scenario[]>("get_scenarios");
+export const getPresets = () => invoke<Preset[]>("get_presets");
 
-export const getActiveScenario = () =>
-  invoke<Scenario | null>("get_active_scenario");
+export const getActivePreset = () =>
+  invoke<Preset | null>("get_active_preset");
 
-export const createScenario = (name: string, description?: string, icon?: string) =>
-  invoke<Scenario>("create_scenario", {
+export const createPreset = (name: string, description?: string, icon?: string) =>
+  invoke<Preset>("create_preset", {
     name,
     description: description || null,
     icon: icon || null,
   });
 
-export const updateScenario = (
+export const updatePreset = (
   id: string,
   name: string,
   description?: string,
   icon?: string
 ) =>
-  invoke<void>("update_scenario", {
+  invoke<void>("update_preset", {
     id,
     name,
     description: description || null,
     icon: icon || null,
   });
 
-export const deleteScenario = (id: string) =>
-  invoke<void>("delete_scenario", { id });
+export const deletePreset = (id: string) =>
+  invoke<void>("delete_preset", { id });
 
-export const switchScenario = (id: string) =>
-  invoke<void>("switch_scenario", { id });
+/** @deprecated v1.16+: clicking a scene no longer applies. Use applyPresetToDefault. */
+export const switchPreset = (id: string) =>
+  invoke<void>("switch_preset", { id });
 
-export const addSkillToScenario = (skillId: string, scenarioId: string) =>
-  invoke<void>("add_skill_to_scenario", { skillId, scenarioId });
+export const applyPresetToDefault = (id: string) =>
+  invoke<void>("apply_preset_to_default", { id });
 
-export const removeSkillFromScenario = (skillId: string, scenarioId: string) =>
-  invoke<void>("remove_skill_from_scenario", { skillId, scenarioId });
+export const addSkillToPreset = (skillId: string, presetId: string) =>
+  invoke<void>("add_skill_to_preset", { skillId, presetId });
 
-export const reorderScenarios = (ids: string[]) =>
-  invoke<void>("reorder_scenarios", { ids });
+export const removeSkillFromPreset = (skillId: string, presetId: string) =>
+  invoke<void>("remove_skill_from_preset", { skillId, presetId });
+
+export const reorderPresets = (ids: string[]) =>
+  invoke<void>("reorder_presets", { ids });
 
 export const reorderProjects = (ids: string[]) =>
   invoke<void>("reorder_projects", { ids });
 
-export const getScenarioSkillOrder = (scenarioId: string) =>
-  invoke<string[]>("get_scenario_skill_order", { scenarioId });
+export const getPresetSkillOrder = (presetId: string) =>
+  invoke<string[]>("get_preset_skill_order", { presetId });
 
-export const reorderScenarioSkills = (scenarioId: string, skillIds: string[]) =>
-  invoke<void>("reorder_scenario_skills", { scenarioId, skillIds });
+export const reorderPresetSkills = (presetId: string, skillIds: string[]) =>
+  invoke<void>("reorder_preset_skills", { presetId, skillIds });
 
 // ── Projects ──
 
@@ -522,151 +672,246 @@ export const getProjects = () => invoke<Project[]>("get_projects");
 export const addProject = (path: string) =>
   invoke<Project>("add_project", { path });
 
+export const addLinkedWorkspace = (name: string, path: string, disabledPath?: string) =>
+  invoke<Project>("add_linked_workspace", {
+    name,
+    path,
+    disabledPath: disabledPath ?? null,
+  });
+
 export const removeProject = (id: string) =>
   invoke<void>("remove_project", { id });
 
 export const scanProjects = (root: string) =>
   invoke<string[]>("scan_projects", { root });
 
+export const getProjectAgentTargets = (projectId: string) =>
+  invoke<ProjectAgentTarget[]>("get_project_agent_targets", { projectId });
+
 export const getProjectSkills = (projectId: string) =>
   invoke<ProjectSkill[]>("get_project_skills", { projectId });
 
-export const getProjectSkillDocument = (projectPath: string, skillDirName: string) =>
-  invoke<ProjectSkillDocument>("get_project_skill_document", { projectPath, skillDirName });
+export const getProjectSkillDocument = (projectId: string, skillRelativePath: string, agent: string) =>
+  invoke<ProjectSkillDocument>("get_project_skill_document", { projectId, skillRelativePath, agent });
 
-export const importProjectSkillToCenter = (projectId: string, skillDirName: string) =>
-  invoke<void>("import_project_skill_to_center", { projectId, skillDirName });
+export const importProjectSkillToCenter = (projectId: string, skillRelativePath: string, agent: string) =>
+  invoke<void>("import_project_skill_to_center", { projectId, skillRelativePath, agent });
 
-export const exportSkillToProject = (skillId: string, projectId: string) =>
-  invoke<void>("export_skill_to_project", { skillId, projectId });
+export const exportSkillToProject = (skillId: string, projectId: string, agents?: string[]) =>
+  invoke<void>("export_skill_to_project", { skillId, projectId, agents: agents ?? null });
 
-export const updateProjectSkillToCenter = (projectId: string, skillDirName: string) =>
-  invoke<void>("update_project_skill_to_center", { projectId, skillDirName });
+export const updateProjectSkillToCenter = (projectId: string, skillRelativePath: string, agent: string) =>
+  invoke<void>("update_project_skill_to_center", { projectId, skillRelativePath, agent });
 
-export const updateProjectSkillFromCenter = (projectId: string, skillDirName: string) =>
-  invoke<void>("update_project_skill_from_center", { projectId, skillDirName });
+export const updateProjectSkillFromCenter = (projectId: string, skillRelativePath: string, agent: string) =>
+  invoke<void>("update_project_skill_from_center", { projectId, skillRelativePath, agent });
 
-export const toggleProjectSkill = (projectId: string, skillDirName: string, enabled: boolean) =>
-  invoke<void>("toggle_project_skill", { projectId, skillDirName, enabled });
+export const toggleProjectSkill = (projectId: string, skillRelativePath: string, agent: string, enabled: boolean) =>
+  invoke<void>("toggle_project_skill", { projectId, skillRelativePath, agent, enabled });
 
-export const deleteProjectSkill = (projectId: string, skillDirName: string) =>
-  invoke<void>("delete_project_skill", { projectId, skillDirName });
+export const deleteProjectSkill = (projectId: string, skillRelativePath: string, agent: string) =>
+  invoke<void>("delete_project_skill", { projectId, skillRelativePath, agent });
 
 export const slugifySkillNames = (names: string[]) =>
   invoke<string[]>("slugify_skill_names", { names });
 
-// ── Enterprise Auth ──
+// ── Agent Local Workspace ──
 
-export interface LoginResponse {
-  token: string;
-  username: string;
-  department: string;
-  is_support_dept: boolean;
+export const getGlobalLocalSkills = (agent: string) =>
+  invoke<ProjectSkill[]>("get_global_local_skills", { agent });
+
+export const getGlobalLocalSkillDocument = (agent: string, skillRelativePath: string) =>
+  invoke<ProjectSkillDocument>("get_global_local_skill_document", { agent, skillRelativePath });
+
+export const importGlobalLocalSkillToCenter = (agent: string, skillRelativePath: string) =>
+  invoke<void>("import_global_local_skill_to_center", { agent, skillRelativePath });
+
+export const updateGlobalLocalSkillFromCenter = (agent: string, skillRelativePath: string) =>
+  invoke<void>("update_global_local_skill_from_center", { agent, skillRelativePath });
+
+export const deleteGlobalLocalSkill = (agent: string, skillRelativePath: string) =>
+  invoke<void>("delete_global_local_skill", { agent, skillRelativePath });
+
+// ── MCP Registry (Global) ──
+
+export interface McpServer {
+  name: string;
+  description: string;
+  version: string;
+  website_url?: string;
+  repository: { url: string; source: string } | null;
+  remotes: { type: string; url: string }[];
 }
 
-export interface AuthStatus {
-  authenticated: boolean;
-  username: string | null;
-  department: string | null;
-  is_support_dept: boolean;
+export const searchMcpRegistry = (query: string, limit?: number) =>
+  invoke<McpServer[]>("search_mcp_registry", { query, limit: limit ?? null });
+
+export const listMcpRegistry = (page?: number, perPage?: number) =>
+  invoke<McpServer[]>("list_mcp_registry", { page: page ?? null, per_page: perPage ?? null });
+
+// ── Domestic MCP Market (China) ──
+
+export interface DomesticMcpServer {
+  id: string;
+  name: string;
+  description: string;
+  provider: string;
+  url: string;
+  category: string;
+  installs: number;
+  icon?: string;
 }
 
-export interface SkillInfo {
+export interface McpProvider {
+  id: string;
+  name: string;
+  icon: string;
+}
+
+export const searchDomesticMcp = (query: string) =>
+  invoke<DomesticMcpServer[]>("search_domestic_mcp", { query });
+
+export const listDomesticMcp = (provider?: string) =>
+  invoke<DomesticMcpServer[]>("list_domestic_mcp", { provider: provider ?? null });
+
+export const listDomesticMcpProviders = () =>
+  invoke<McpProvider[]>("list_domestic_mcp_providers");
+
+export const searchTopMcp = (query: string, limit?: number) =>
+  invoke<DomesticMcpServer[]>("search_top_mcp", { query, limit: limit ?? null });
+
+export const searchGiteeSkills = (query: string, limit?: number) =>
+  invoke<DomesticMcpServer[]>("search_gitee_skills", { query, limit: limit ?? null });
+
+export const fetchGiteeTrending = (limit?: number) =>
+  invoke<DomesticMcpServer[]>("fetch_gitee_trending", { limit: limit ?? null });
+
+export interface DomesticMcpInstallResult {
+  server_name: string;
+  written_targets: string[];
+  skipped_targets: string[];
+  config_snippet: string;
+  server_key: string;
+}
+
+export const installDomesticMcpDirect = (serverId: string) =>
+  invoke<DomesticMcpInstallResult>("install_domestic_mcp_direct", { serverId });
+
+export const installDomesticMcp = (serverId: string, provider: string) =>
+  invoke<void>("install_domestic_mcp", { serverId, provider });
+
+export const installRegistryMcp = (serverName: string) =>
+  invoke<string>("install_registry_mcp", { serverName });
+
+// ── SkillHub.cn ──
+
+export interface SkillHubSkill {
+  slug: string;
+  name: string;
+  description: string;
+  author: string;
+  version: string | null;
+  tags: string[];
+  installs: number;
+  source_url: string | null;
+}
+
+export const searchSkillhub = (query: string, limit?: number) =>
+  invoke<SkillHubSkill[]>("search_skillhub", { query, limit: limit ?? null });
+
+export const listSkillhubTrending = (limit?: number) =>
+  invoke<SkillHubSkill[]>("list_skillhub_trending", { limit: limit ?? null });
+
+export const getSkillhubSkill = (skillId: string) =>
+  invoke<SkillHubSkill>("get_skillhub_skill", { skillId });
+
+export const installSkillhubSkill = (skillId: string) =>
+  invoke<string>("install_skillhub_skill", { skillId });
+
+// ── Enterprise Skills ──
+
+export interface EnterpriseSkill {
   name: string;
   description: string;
   version: string;
   author: string;
-  visibility: "global" | "support-dept";
-  installed: boolean;
+  visibility: string;
+  tags: string[];
   download_count?: number;
-  tags?: string[];
+}
+
+export interface EnterpriseLoginResponse {
+  success: boolean;
+  token: string;
+  user: {
+    userId: number;
+    login: string;
+    email: string;
+    isAdmin: boolean;
+  };
+  /** 当前用户可上传的可见性级别（"public"/"tech-manager"/"support" 的子集，空数组 = 无上传权限） */
+  uploadVisibilities: string[];
 }
 
 export const enterpriseLogin = (username: string, password: string) =>
-  invoke<LoginResponse>("enterprise_login", { username, password });
-
-export const enterpriseLogout = () =>
-  invoke<void>("enterprise_logout");
-
-export const getAuthStatus = () =>
-  invoke<AuthStatus>("enterprise_get_auth");
-
-export const validateToken = () =>
-  invoke<boolean>("enterprise_check_auth");
-
-// ── Enterprise API ──
+  invoke<EnterpriseLoginResponse>("enterprise_login", { username, password });
 
 export const enterpriseListSkills = () =>
-  invoke<SkillInfo[]>("enterprise_list_skills");
-
-export const enterpriseGetSkill = (name: string) =>
-  invoke<SkillInfo>("enterprise_get_skill", { name });
-
-export const enterpriseDownloadSkill = (name: string) =>
-  invoke<void>("enterprise_download_skill", { name });
-
-export const enterpriseInstallSkill = (name: string) =>
-  invoke<string>("enterprise_install_skill", { name });
-
-// ── Enterprise Upload / Scan / History ──
-
-export interface UploadResponse {
-  success: boolean;
-  version: string;
-  scan_status: string;
-  message: string;
-}
-
-export interface ScanData {
-  status: string;
-  last_scan_at: string | null;
-  scan_report: unknown;
-}
-
-export interface ScanStatusResponse {
-  success: boolean;
-  data: ScanData | null;
-}
-
-export interface ScanTriggerResult {
-  success: boolean;
-  scan_result: unknown;
-  status: string;
-}
-
-export interface VersionInfo {
-  version: string;
-  status: string;
-  uploaded_at: string;
-}
-
-export const enterpriseUploadSkill = (
-  skillId: string,
-  version?: string,
-  category?: "global" | "support-dept"
-) =>
-  invoke<UploadResponse>("enterprise_upload_skill", {
-    skillId,
-    version: version ?? null,
-    category: category ?? "global",
-  });
-
-export const enterpriseCheckScan = (name: string, version: string) =>
-  invoke<ScanStatusResponse>("enterprise_check_scan", { name, version });
-
-export const enterpriseTriggerScan = (name: string, version: string) =>
-  invoke<ScanTriggerResult>("enterprise_trigger_scan", { name, version });
-
-export const enterpriseUploadHistory = (name: string) =>
-  invoke<VersionInfo[]>("enterprise_upload_history", { name });
-
-// ── Enterprise Tags / Search ──
+  invoke<EnterpriseSkill[]>("enterprise_list_skills");
 
 export const enterpriseGetTags = () =>
   invoke<string[]>("enterprise_get_tags");
 
 export const enterpriseSearchByTag = (tag: string) =>
-  invoke<SkillInfo[]>("enterprise_search_by_tag", { tag });
+  invoke<EnterpriseSkill[]>("enterprise_search_by_tag", { tag });
 
 export const enterpriseSearchByQuery = (query: string) =>
-  invoke<SkillInfo[]>("enterprise_search_by_query", { query });
+  invoke<EnterpriseSkill[]>("enterprise_search_by_query", { query });
+
+export const enterpriseIsAuthenticated = () =>
+  invoke<boolean>("enterprise_is_authenticated");
+
+export const enterpriseLogout = () =>
+  invoke<void>("enterprise_logout");
+
+export const enterpriseInstallSkill = (name: string, version: string) =>
+  invoke<void>("enterprise_install_skill", { name, version });
+
+export const enterpriseSubmitFeedback = (
+  feedbackType: string,
+  skill: string,
+  title: string,
+  description: string
+) =>
+  invoke<void>("enterprise_submit_feedback", {
+    feedbackType,
+    skill,
+    title,
+    description,
+  });
+
+export interface UploadResponse {
+  success: boolean;
+  /** 服务端发布后的版本号（留空上传时由服务端自动递增） */
+  version: string;
+  message: string;
+  /** "published" | "unsafe" 等 */
+  status: string;
+}
+
+/**
+ * 把本地技能（central_path 目录内容）打包上传/发布到企业服务器。
+ * version 留空 = 服务端自动递增；安全扫描不过会抛错（含服务端错误信息）。
+ */
+export const enterpriseUploadSkill = (
+  name: string,
+  centralPath: string,
+  version?: string,
+  visibility?: string
+) =>
+  invoke<UploadResponse>("enterprise_upload_skill", {
+    name,
+    centralPath,
+    version: version || null,
+    visibility: visibility || null,
+  });

@@ -22,6 +22,7 @@ import {
   MoreHorizontal,
   Pencil,
   Calendar,
+  Globe,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -44,11 +45,11 @@ const MARKET_SEARCH_CACHE_MAX_ENTRIES = 150;
 
 export function InstallSkills() {
   const { t } = useTranslation();
-  const { refreshScenarios, refreshManagedSkills, managedSkills, openSkillDetailById } = useApp();
+  const { refreshPresets, refreshManagedSkills, managedSkills, openSkillDetailById } = useApp();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [activeTab, setActiveTab] = useState<"market" | "local" | "git">("market");
-  const [marketTab, setMarketTab] = useState<"hot" | "trending" | "alltime" | "skillhub">("skillhub");
+  const [activeTab, setActiveTab] = useState<"market" | "local" | "git" | "skillhub">("market");
+  const [marketTab, setMarketTab] = useState<"hot" | "trending" | "alltime">("alltime");
   const [marketQuery, setMarketQuery] = useState("");
   const [marketSourceFilter, setMarketSourceFilter] = useState("all");
   const [marketSkills, setMarketSkills] = useState<SkillsShSkill[]>([]);
@@ -59,12 +60,19 @@ export function InstallSkills() {
   const [marketError, setMarketError] = useState<string | null>(null);
   const [marketReloadKey, setMarketReloadKey] = useState(0);
   const [installing, setInstalling] = useState<string | null>(null);
+  // SkillHub state
+  const [skillhubQuery, setSkillhubQuery] = useState("");
+  const [skillhubSkills, setSkillhubSkills] = useState<api.SkillHubSkill[]>([]);
+  const [skillhubLoading, setSkillhubLoading] = useState(false);
+  const [skillhubError, setSkillhubError] = useState<string | null>(null);
+  const [skillhubInstalling, setSkillhubInstalling] = useState<string | null>(null);
+
   const [gitUrl, setGitUrl] = useState("");
   const [gitLoading, setGitLoading] = useState(false);
   const [gitCancelKey, setGitCancelKey] = useState<string | null>(null);
   const [gitPreview, setGitPreview] = useState<GitPreviewResult | null>(null);
   const [gitPreviewRepoUrl, setGitPreviewRepoUrl] = useState<string | null>(null);
-  const [gitSelections, setGitSelections] = useState<{ dir_name: string; name: string; description: string | null; selected: boolean }[]>([]);
+  const [gitSelections, setGitSelections] = useState<{ rel_path: string; name: string; description: string | null; selected: boolean }[]>([]);
   const [gitConfirmLoading, setGitConfirmLoading] = useState(false);
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [scanLoading, setScanLoading] = useState(false);
@@ -72,8 +80,6 @@ export function InstallSkills() {
   const [importingPaths, setImportingPaths] = useState<Set<string>>(new Set());
   const [importingAll, setImportingAll] = useState(false);
   const [renameEditing, setRenameEditing] = useState<Record<string, string>>({});
-  const [aiSearch, setAiSearch] = useState(false);
-  const [skillsmpApiKey, setSkillsmpApiKey] = useState<string | null>(null);
   const marketListRef = useRef<HTMLDivElement | null>(null);
   const [sourceOverflowOpen, setSourceOverflowOpen] = useState(false);
   const [sourceOverflowSide, setSourceOverflowSide] = useState<"left" | "right">("left");
@@ -138,7 +144,7 @@ export function InstallSkills() {
   const installedSourceRefs = useMemo(() => {
     const set = new Set<string>();
     for (const skill of managedSkills) {
-      if ((skill.source_type === "skillssh" || skill.source_type === "skillhub") && skill.source_ref) {
+      if (skill.source_type === "skillssh" && skill.source_ref) {
         set.add(skill.source_ref);
       }
     }
@@ -179,20 +185,61 @@ export function InstallSkills() {
   }, [resetSourceOverflowState, sourceOverflowOpen]);
 
   useEffect(() => {
-    api.getSettings("skillsmp_api_key").then((v) => setSkillsmpApiKey(v || null));
-  }, []);
-
-  useEffect(() => {
     const tab = searchParams.get("tab");
     if (tab === "market" || tab === "local" || tab === "git") {
       setActiveTab(tab);
     }
   }, [searchParams]);
 
-  const switchTab = (tab: "market" | "local" | "git") => {
+  const switchTab = (tab: "market" | "local" | "git" | "skillhub") => {
     setActiveTab(tab);
     setSearchParams({ tab });
   };
+
+  const handleSkillhubSearch = useCallback(async () => {
+    if (!skillhubQuery.trim()) return;
+    setSkillhubLoading(true);
+    setSkillhubError(null);
+    try {
+      const results = await api.searchSkillhub(skillhubQuery);
+      setSkillhubSkills(results);
+    } catch (error: unknown) {
+      const message = getErrorMessage(error, "Failed to search SkillHub");
+      setSkillhubError(message);
+      toast.error(message);
+    } finally {
+      setSkillhubLoading(false);
+    }
+  }, [skillhubQuery]);
+
+  const handleSkillhubTrending = useCallback(async () => {
+    setSkillhubLoading(true);
+    setSkillhubError(null);
+    try {
+      const results = await api.listSkillhubTrending();
+      setSkillhubSkills(results);
+    } catch (error: unknown) {
+      const message = getErrorMessage(error, "Failed to load trending skills");
+      setSkillhubError(message);
+      toast.error(message);
+    } finally {
+      setSkillhubLoading(false);
+    }
+  }, []);
+
+  const handleSkillhubInstall = useCallback(async (skill: api.SkillHubSkill) => {
+    setSkillhubInstalling(skill.slug);
+    try {
+      await api.installSkillhubSkill(skill.slug);
+      toast.success(`Installed ${skill.name}`);
+      await refreshManagedSkills();
+      await refreshPresets();
+    } catch (error: unknown) {
+      toast.error(getErrorMessage(error, "Failed to install skill"));
+    } finally {
+      setSkillhubInstalling(null);
+    }
+  }, [refreshManagedSkills, refreshPresets]);
 
   const runScan = useCallback(async () => {
     setScanLoading(true);
@@ -210,14 +257,25 @@ export function InstallSkills() {
     }
   }, [t]);
 
-  const refreshDiscoveredSnapshot = useCallback(async () => {
+  // Silent variant used after install/import. Never surfaces a toast or
+  // new error state — failure here must not mask the install success.
+  // Clears any stale localError on success so successful operations don't
+  // leave previous error banners behind.
+  const runScanSilent = useCallback(async () => {
     try {
-      const cached = await api.getDiscoveredGroups();
-      setScanResult(cached);
-    } catch (error) {
-      console.warn("Failed to refresh discovered skills snapshot", error);
+      const result = await api.scanLocalSkills();
+      setScanResult(result);
+      setLocalError(null);
+    } catch (error: unknown) {
+      console.warn("silent scan failed:", error);
     }
   }, []);
+
+  const warnRejected = (results: PromiseSettledResult<unknown>[], label: string) => {
+    for (const r of results) {
+      if (r.status === "rejected") console.warn(`${label} failed:`, r.reason);
+    }
+  };
 
   useEffect(() => {
     if (activeTab !== "market") return;
@@ -229,7 +287,7 @@ export function InstallSkills() {
       marketSearchLimit > marketSkillsLengthRef.current;
 
     if (query.length > 0 && !loadingMore) {
-      const cacheKey = `${query.toLowerCase()}|${aiSearch ? "ai" : "kw"}|${marketSearchLimit}`;
+      const cacheKey = `${query.toLowerCase()}|${marketSearchLimit}`;
       const cached = marketSearchCacheRef.current.get(cacheKey);
       if (cached && Date.now() - cached.timestamp < MARKET_SEARCH_CACHE_TTL_MS) {
         setMarketSkills(cached.data);
@@ -249,36 +307,16 @@ export function InstallSkills() {
     setMarketError(null);
 
     let stale = false;
-    let request: Promise<SkillsShSkill[]>;
-
-    if (marketTab === "skillhub") {
-      const skillhubPromise = query
-        ? api.searchSkillhub(query, marketSearchLimit)
-        : api.listSkillhubTrending(30);
-      request = skillhubPromise.then((skills) =>
-        skills.map((s) => ({
-          id: s.id,
-          skill_id: s.id,
-          name: s.name,
-          source: "skillhub" as const,
-          installs: s.installs,
-        }))
-      );
-    } else {
-      // Use existing skills.sh API
-      request = query
-        ? (aiSearch
-          ? api.searchSkillsmp(query, true, undefined, marketSearchLimit)
-          : api.searchSkillssh(query, marketSearchLimit))
-        : api.fetchLeaderboard(marketTab);
-    }
+    const request = query
+      ? api.searchSkillssh(query, marketSearchLimit)
+      : api.fetchLeaderboard(marketTab);
 
     request
       .then((result) => {
         if (stale) return;
         setMarketSkills(result);
         if (query.length > 0 && !loadingMore) {
-          const cacheKey = `${query.toLowerCase()}|${aiSearch ? "ai" : "kw"}|${marketSearchLimit}`;
+          const cacheKey = `${query.toLowerCase()}|${marketSearchLimit}`;
           marketSearchCacheRef.current.set(cacheKey, { timestamp: Date.now(), data: result });
           pruneMarketSearchCache();
         }
@@ -289,7 +327,7 @@ export function InstallSkills() {
       .catch((e) => {
         if (stale) return;
         console.error(e);
-        const message = getErrorMessage(e, t("common.requestFailed"));
+        const message = e?.toString?.() || t("common.error");
         setMarketError(message);
         toast.error(message);
       })
@@ -300,48 +338,40 @@ export function InstallSkills() {
       });
 
     return () => { stale = true; };
-  }, [activeTab, aiSearch, debouncedMarketQuery, marketReloadKey, marketSearchLimit, marketTab, pruneMarketSearchCache, t]);
+  }, [activeTab, debouncedMarketQuery, marketReloadKey, marketSearchLimit, marketTab, pruneMarketSearchCache, t]);
 
   useEffect(() => {
-    if (activeTab !== "local" || scanResult || scanLoading) return;
-    // Prefer cached DB results (populated by the first-run auto scan); fall
-    // back to a live scan only when nothing is cached.
-    let cancelled = false;
-    (async () => {
-      try {
-        const cached = await api.getDiscoveredGroups();
-        if (cancelled) return;
-        if (cached && cached.skills_found > 0) {
-          setScanResult(cached);
-          return;
-        }
-      } catch (error) {
-        console.warn("getDiscoveredGroups failed, fall back to live scan", error);
-      }
-      if (!cancelled) runScan();
-    })();
-    return () => { cancelled = true; };
+    if (activeTab === "local" && !scanResult && !scanLoading) {
+      runScan();
+    }
   }, [activeTab, scanLoading, scanResult, runScan]);
 
   const installLocalSource = async (sourcePath: string) => {
-    const name = sourcePath.split(/[\\/]/).pop() || sourcePath;
+    const name = sourcePath.split("/").pop() || sourcePath;
     const toastId = toast.loading(t("install.toast.installing", { name }));
     try {
       await api.installLocal(sourcePath);
-      await Promise.all([refreshScenarios(), refreshManagedSkills()]);
-      await refreshDiscoveredSnapshot();
-      toast.success(t("install.toast.success", { name }), {
-        id: toastId,
-        action: {
-          label: t("install.toast.view"),
-          onClick: () => goToSkill(name),
-        },
-      });
     } catch (e) {
       const message = getErrorMessage(e, t("common.error"));
       setLocalError(message);
       toast.error(message, { id: toastId });
+      return;
     }
+    // Install succeeded — post-install refresh is best-effort and must not
+    // surface as an install failure.
+    const results = await Promise.allSettled([
+      refreshPresets(),
+      refreshManagedSkills(),
+      runScanSilent(),
+    ]);
+    warnRejected(results, "post-install refresh");
+    toast.success(t("install.toast.success", { name }), {
+      id: toastId,
+      action: {
+        label: t("install.toast.view"),
+        onClick: () => goToSkill(name),
+      },
+    });
   };
 
   const handleLocalFolderInstall = async () => {
@@ -423,7 +453,7 @@ export function InstallSkills() {
         );
       }
 
-      await Promise.all([refreshScenarios(), refreshManagedSkills()]);
+      await Promise.all([refreshPresets(), refreshManagedSkills()]);
       runScan();
     } catch (error: unknown) {
       const message = getErrorMessage(error, t("common.error"));
@@ -443,25 +473,23 @@ export function InstallSkills() {
     let unlisten: (() => void) | null = null;
 
     try {
-      if (skill.source === "skillhub") {
-        // Install from SkillHub.cn
-        await api.installSkillhubSkill(skill.skill_id);
-      } else {
-        // Install from skills.sh
-        unlisten = await listen<{ skill_id: string; phase: string }>(
-          "install-progress",
-          (event) => {
-            if (event.payload.skill_id !== cancelKey) return;
-            if (event.payload.phase === "cloning") {
-              toast.loading(t("install.toast.cloning"), { id: toastId });
-            } else if (event.payload.phase === "installing") {
-              toast.loading(t("install.toast.installing", { name: displayName }), { id: toastId });
-            }
+      unlisten = await listen<{ skill_id: string; phase: string; detail?: string }>(
+        "install-progress",
+        (event) => {
+          if (event.payload.skill_id !== cancelKey) return;
+          if (event.payload.phase === "cloning") {
+            const detail = event.payload.detail?.trim();
+            const msg = detail
+              ? `${t("install.toast.cloning")}\n${detail}`
+              : t("install.toast.cloning");
+            toast.loading(msg, { id: toastId });
+          } else if (event.payload.phase === "installing") {
+            toast.loading(t("install.toast.installing", { name: displayName }), { id: toastId });
           }
-        );
-        await api.installFromSkillssh(skill.source, skill.skill_id);
-      }
-      await Promise.all([refreshScenarios(), refreshManagedSkills()]);
+        }
+      );
+      await api.installFromSkillssh(skill.source, skill.skill_id);
+      await Promise.all([refreshPresets(), refreshManagedSkills()]);
       toast.success(t("install.toast.success", { name: displayName }), {
         id: toastId,
         action: {
@@ -497,12 +525,16 @@ export function InstallSkills() {
     let unlisten: (() => void) | null = null;
 
     try {
-      unlisten = await listen<{ skill_id: string; phase: string }>(
+      unlisten = await listen<{ skill_id: string; phase: string; detail?: string }>(
         "install-progress",
         (event) => {
           if (event.payload.skill_id !== url) return;
           if (event.payload.phase === "cloning") {
-            toast.loading(t("install.toast.cloning"), { id: toastId });
+            const detail = event.payload.detail?.trim();
+            const msg = detail
+              ? `${t("install.toast.cloning")}\n${detail}`
+              : t("install.toast.cloning");
+            toast.loading(msg, { id: toastId });
           }
         }
       );
@@ -511,7 +543,7 @@ export function InstallSkills() {
       setGitPreview(preview);
       setGitPreviewRepoUrl(url);
       setGitSelections(preview.skills.map((s) => ({
-        dir_name: s.dir_name,
+        rel_path: s.rel_path,
         name: s.name,
         description: s.description,
         selected: true,
@@ -550,9 +582,9 @@ export function InstallSkills() {
       await api.confirmGitInstall(
         repoUrl,
         gitPreview.temp_dir,
-        selected.map((s) => ({ dir_name: s.dir_name, name: s.name }))
+        selected.map((s) => ({ rel_path: s.rel_path, name: s.name }))
       );
-      await Promise.all([refreshScenarios(), refreshManagedSkills()]);
+      await Promise.all([refreshPresets(), refreshManagedSkills()]);
       toast.success(t("install.toast.success", { name: selected.map((s) => s.name).join(", ") }));
       setGitUrl("");
       setGitPreview(null);
@@ -568,12 +600,19 @@ export function InstallSkills() {
   const handleImportDiscovered = async (sourcePath: string, name: string) => {
     setImportingPaths((prev) => new Set(prev).add(sourcePath));
     try {
-      await api.importExistingSkill(sourcePath, name);
+      try {
+        await api.importExistingSkill(sourcePath, name);
+      } catch (error: unknown) {
+        toast.error(getErrorMessage(error, t("common.error")));
+        return;
+      }
       toast.success(t("install.scan.importedOne", { name }));
-      await Promise.all([refreshScenarios(), refreshManagedSkills()]);
-      await runScan();
-    } catch (error: unknown) {
-      toast.error(getErrorMessage(error, t("common.error")));
+      const results = await Promise.allSettled([
+        refreshPresets(),
+        refreshManagedSkills(),
+        runScanSilent(),
+      ]);
+      warnRejected(results, "post-import refresh");
     } finally {
       setImportingPaths((prev) => {
         const next = new Set(prev);
@@ -586,12 +625,19 @@ export function InstallSkills() {
   const handleImportAllDiscovered = async () => {
     setImportingAll(true);
     try {
-      await api.importAllDiscovered();
+      try {
+        await api.importAllDiscovered();
+      } catch (error: unknown) {
+        toast.error(getErrorMessage(error, t("common.error")));
+        return;
+      }
       toast.success(t("install.scan.importedAll"));
-      await Promise.all([refreshScenarios(), refreshManagedSkills()]);
-      await runScan();
-    } catch (error: unknown) {
-      toast.error(getErrorMessage(error, t("common.error")));
+      const results = await Promise.allSettled([
+        refreshPresets(),
+        refreshManagedSkills(),
+        runScanSilent(),
+      ]);
+      warnRejected(results, "post-import refresh");
     } finally {
       setImportingAll(false);
     }
@@ -729,6 +775,7 @@ export function InstallSkills() {
         <div className="flex gap-1 border-b border-border-subtle">
           {[
             { id: "market" as const, label: t("install.browseMarket"), icon: Box },
+            { id: "skillhub" as const, label: "SkillHub", icon: Globe },
             { id: "local" as const, label: t("install.localInstall"), icon: UploadCloud },
             { id: "git" as const, label: t("install.gitInstall"), icon: Github },
           ].map((tab) => {
@@ -762,7 +809,6 @@ export function InstallSkills() {
                   {!hasMarketQuery ? (
                     <div className="app-segmented shrink-0 bg-background">
                       {[
-                        { id: "skillhub" as const, label: t("install.skillhub"), icon: Box },
                         { id: "alltime" as const, label: t("install.all"), icon: Clock },
                         { id: "trending" as const, label: t("install.trending"), icon: TrendingUp },
                         { id: "hot" as const, label: t("install.hot"), icon: Star },
@@ -795,39 +841,13 @@ export function InstallSkills() {
                         setMarketQuery(event.target.value);
                         setMarketSearchLimit(MARKET_SEARCH_STEP);
                       }}
-                      placeholder={aiSearch ? t("install.aiSearchPlaceholder", { defaultValue: "AI search — describe what you need..." }) : t("install.searchMarket")}
+                      placeholder={t("install.searchMarket")}
                       className="app-input w-full bg-background pl-9"
                       autoCapitalize="none"
                       autoCorrect="off"
                       spellCheck={false}
                     />
                   </div>
-                  <button
-                    onClick={() => {
-                      if (skillsmpApiKey) {
-                        setAiSearch((v) => !v);
-                      } else {
-                        toast.info(
-                          t("install.aiSearchNoKey", { defaultValue: "Set your SkillsMP API key in Settings to enable AI search" }),
-                          {
-                            action: {
-                              label: t("common.goToSettings", { defaultValue: "Settings" }),
-                              onClick: () => navigate("/settings"),
-                            },
-                          }
-                        );
-                      }
-                    }}
-                    className={cn(
-                      "shrink-0 h-10 rounded-lg border px-3 text-[13px] font-medium transition-colors",
-                      aiSearch && skillsmpApiKey
-                        ? "border-accent-border bg-accent-bg text-accent-light"
-                        : "border-border-subtle bg-background text-muted hover:bg-surface-hover hover:text-secondary"
-                    )}
-                    title={t("install.aiSearchToggle", { defaultValue: "AI-powered search (SkillsMP)" })}
-                  >
-                    {t("install.aiSearchButton", { defaultValue: "AI Search" })}
-                  </button>
                 </div>
               </div>
 
@@ -1591,7 +1611,7 @@ export function InstallSkills() {
               <div className="max-h-64 space-y-2 overflow-y-auto scrollbar-hide pr-1">
                 {gitSelections.map((item, idx) => (
                   <div
-                    key={item.dir_name}
+                    key={item.rel_path}
                     className={cn(
                       "flex items-center gap-3 rounded-lg border px-3 py-2 transition-colors",
                       item.selected
@@ -1656,6 +1676,158 @@ export function InstallSkills() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {activeTab === "skillhub" && (
+        <div className="space-y-4 pb-8 animate-in fade-in duration-300">
+          <section className="app-panel overflow-hidden">
+            <div className="border-b border-border-subtle px-4 py-3.5">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                <div className="max-w-xl">
+                  <div className="mb-2 flex flex-wrap items-center gap-2 text-[13px] text-muted">
+                    <span className="inline-flex items-center gap-1.5 rounded-[5px] border border-accent-border bg-accent-bg px-2 py-1 font-medium text-accent-light">
+                      <Globe className="h-3.5 w-3.5" />
+                      SkillHub.cn
+                    </span>
+                  </div>
+                  <h2 className="text-[14px] font-semibold text-secondary">
+                    SkillHub.cn {t("install.title")}
+                  </h2>
+                  <p className="mt-1 text-[13px] leading-5 text-muted">
+                    Search and install skills from SkillHub.cn
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-4">
+              <div className="relative mb-4">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
+                <input
+                  type="text"
+                  value={skillhubQuery}
+                  onChange={(e) => setSkillhubQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && skillhubQuery.trim()) {
+                      handleSkillhubSearch();
+                    }
+                  }}
+                  placeholder="Search SkillHub.cn..."
+                  className="app-input w-full bg-background pl-9"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                />
+              </div>
+
+              <div className="flex gap-2 mb-4">
+                <button
+                  onClick={handleSkillhubSearch}
+                  disabled={skillhubLoading || !skillhubQuery.trim()}
+                  className="app-button-primary"
+                >
+                  {skillhubLoading ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Search className="h-3.5 w-3.5" />
+                  )}
+                  Search
+                </button>
+                <button
+                  onClick={handleSkillhubTrending}
+                  disabled={skillhubLoading}
+                  className="app-button-secondary"
+                >
+                  {skillhubLoading ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <TrendingUp className="h-3.5 w-3.5" />
+                  )}
+                  Trending
+                </button>
+              </div>
+
+              {skillhubError && (
+                <div className="mb-4 rounded-lg border border-error-border bg-error-bg p-3 text-[13px] text-error">
+                  {skillhubError}
+                </div>
+              )}
+
+              {skillhubSkills.length > 0 && (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {skillhubSkills.map((skill) => (
+                    <div
+                      key={skill.slug}
+                      className="app-card-hover flex flex-col gap-2 rounded-lg border border-border-subtle bg-background p-3.5"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <h3 className="truncate text-[14px] font-medium text-secondary">
+                            {skill.name}
+                          </h3>
+                          {skill.author && (
+                            <p className="mt-0.5 text-[12px] text-muted">by {skill.author}</p>
+                          )}
+                        </div>
+                        {skill.version && (
+                          <span className="shrink-0 rounded-[5px] border border-border-subtle px-1.5 py-0.5 text-[11px] text-muted">
+                            v{skill.version}
+                          </span>
+                        )}
+                      </div>
+
+                      {skill.description && (
+                        <p className="line-clamp-2 text-[12px] leading-4 text-muted">
+                          {skill.description}
+                        </p>
+                      )}
+
+                      {skill.tags && skill.tags.length > 0 && (
+                        <div className="flex flex-wrap gap-1">
+                          {skill.tags.slice(0, 5).map((tag) => (
+                            <span
+                              key={tag}
+                              className="rounded-full border border-border-subtle px-2 py-0.5 text-[10px] text-muted"
+                            >
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="mt-auto flex items-center justify-between pt-2">
+                        <span className="text-[11px] text-muted">
+                          {skill.installs ? `${skill.installs} installs` : ""}
+                        </span>
+                        <button
+                          onClick={() => handleSkillhubInstall(skill)}
+                          disabled={skillhubInstalling === skill.slug}
+                          className="app-button-primary px-3 py-1 text-[12px]"
+                        >
+                          {skillhubInstalling === skill.slug ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <DownloadCloud className="h-3 w-3" />
+                          )}
+                          Install
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {!skillhubLoading && !skillhubError && skillhubSkills.length === 0 && (
+                <div className="flex flex-col items-center justify-center py-12 text-center">
+                  <Globe className="mb-3 h-10 w-10 text-muted" />
+                  <p className="text-[14px] text-muted">
+                    Search for skills or browse trending
+                  </p>
+                </div>
+              )}
+            </div>
+          </section>
         </div>
       )}
     </div>

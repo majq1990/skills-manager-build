@@ -1,97 +1,104 @@
-use anyhow::{Context, Result};
 use std::io::{Cursor, Write};
 use std::path::Path;
-use walkdir::WalkDir;
+
+use anyhow::{Context, Result};
 use zip::write::SimpleFileOptions;
 use zip::ZipWriter;
 
-pub fn pack_skill(skill_dir: &Path) -> Result<Vec<u8>> {
-    let has_skill_md = skill_dir.join("SKILL.md").exists() || skill_dir.join("skill.md").exists();
-    if !has_skill_md {
-        anyhow::bail!("SKILL.md not found in {}", skill_dir.display());
+/// 把目录 `dir` 的**内容**递归打包成内存中的 zip 字节。
+///
+/// zip 根目录 = `dir` 的子项（不带 `dir` 这一层顶层目录），保留子目录结构。
+/// 这正好满足企业服务端「zip 根必须直接含 SKILL.md」的契约：
+/// 当 `dir` 直接含 SKILL.md 时，打出的 zip 根也直接含 SKILL.md。
+///
+/// 仅依赖 std::fs 递归 + `zip` crate，不引入 walkdir 等新依赖。
+pub fn pack_dir(dir: &Path) -> Result<Vec<u8>> {
+    if !dir.is_dir() {
+        anyhow::bail!("Not a directory: {}", dir.display());
     }
 
-    let buf = Vec::new();
-    let mut zip = ZipWriter::new(Cursor::new(buf));
-    let options = SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Stored);
+    let buf = Cursor::new(Vec::<u8>::new());
+    let mut zip = ZipWriter::new(buf);
+    let options = SimpleFileOptions::default();
 
-    let mut files: Vec<(String, std::path::PathBuf)> = Vec::new();
-    for entry in WalkDir::new(skill_dir).into_iter().filter_entry(|e| {
-        let name = e.file_name().to_string_lossy();
-        name != ".git" && name != "node_modules" && name != "__pycache__"
-    }) {
-        let entry = entry.context("Failed to walk skill directory")?;
-        let path = entry.path();
-        let rel = path
-            .strip_prefix(skill_dir)
-            .context("Failed to compute relative path")?;
+    add_dir_contents(&mut zip, dir, "", options)?;
 
-        if rel.as_os_str().is_empty() || path.is_dir() {
-            continue;
-        }
-
-        let rel_str = rel.to_string_lossy().replace('\\', "/");
-        files.push((rel_str, path.to_path_buf()));
-    }
-
-    // Sort: SKILL.md/skill.md first for Node.js unzipper streaming compatibility
-    files.sort_by(|a, b| {
-        let a_is_skill = a.0.eq_ignore_ascii_case("skill.md");
-        let b_is_skill = b.0.eq_ignore_ascii_case("skill.md");
-        b_is_skill.cmp(&a_is_skill).then_with(|| a.0.cmp(&b.0))
-    });
-
-    for (rel_str, path) in &files {
-        zip.start_file(rel_str, options)?;
-        let data = std::fs::read(path)
-            .with_context(|| format!("Failed to read {}", path.display()))?;
-        zip.write_all(&data)?;
-    }
-
-    let cursor = zip.finish().context("Failed to finalize ZIP")?;
+    let cursor = zip.finish().context("Failed to finalize zip")?;
     Ok(cursor.into_inner())
+}
+
+/// 递归把 `dir` 下的条目写进 zip，`prefix` 是当前在 zip 内的相对路径前缀（用 `/` 分隔，无前导斜杠）。
+fn add_dir_contents(
+    zip: &mut ZipWriter<Cursor<Vec<u8>>>,
+    dir: &Path,
+    prefix: &str,
+    options: SimpleFileOptions,
+) -> Result<()> {
+    let mut entries: Vec<_> = std::fs::read_dir(dir)
+        .with_context(|| format!("Failed to read dir: {}", dir.display()))?
+        .collect::<std::io::Result<Vec<_>>>()
+        .with_context(|| format!("Failed to enumerate dir: {}", dir.display()))?;
+    // 稳定排序，保证打包结果可复现。
+    entries.sort_by_key(|e| e.file_name());
+
+    for entry in entries {
+        let path = entry.path();
+        let file_name = entry.file_name();
+        let name = file_name.to_string_lossy();
+        let zip_path = if prefix.is_empty() {
+            name.to_string()
+        } else {
+            format!("{}/{}", prefix, name)
+        };
+
+        let file_type = entry
+            .file_type()
+            .with_context(|| format!("Failed to stat: {}", path.display()))?;
+
+        if file_type.is_dir() {
+            // 显式写入目录条目（带尾斜杠），再递归内容。
+            zip.add_directory(format!("{}/", zip_path), options)
+                .with_context(|| format!("Failed to add dir entry: {}", zip_path))?;
+            add_dir_contents(zip, &path, &zip_path, options)?;
+        } else if file_type.is_file() {
+            let bytes = std::fs::read(&path)
+                .with_context(|| format!("Failed to read file: {}", path.display()))?;
+            zip.start_file(&zip_path, options)
+                .with_context(|| format!("Failed to start zip entry: {}", zip_path))?;
+            zip.write_all(&bytes)
+                .with_context(|| format!("Failed to write zip entry: {}", zip_path))?;
+        }
+        // 软链接等其它类型跳过（技能目录一般不含）。
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Read;
 
     #[test]
-    fn pack_requires_skill_md() {
+    fn pack_dir_puts_skill_md_at_zip_root() {
         let tmp = tempfile::tempdir().unwrap();
-        let result = pack_skill(tmp.path());
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("SKILL.md"));
-    }
+        let root = tmp.path();
+        std::fs::write(root.join("SKILL.md"), "---\nname: Demo\n---\n").unwrap();
+        std::fs::create_dir_all(root.join("scripts")).unwrap();
+        std::fs::write(root.join("scripts").join("run.sh"), "echo hi").unwrap();
 
-    #[test]
-    fn pack_creates_valid_zip() {
-        let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(tmp.path().join("SKILL.md"), "# Test skill").unwrap();
-        std::fs::write(tmp.path().join("main.py"), "print('hi')").unwrap();
-        let bytes = pack_skill(tmp.path()).unwrap();
-        assert!(bytes.len() > 0);
-        assert_eq!(&bytes[0..4], &[0x50, 0x4B, 0x03, 0x04]);
-    }
-}
+        let bytes = pack_dir(root).unwrap();
+        let reader = Cursor::new(bytes);
+        let mut archive = zip::ZipArchive::new(reader).unwrap();
 
-#[cfg(test)]
-mod debug_tests {
-    use super::*;
+        // SKILL.md 必须在根（无顶层目录）。
+        let mut skill_md = archive.by_name("SKILL.md").unwrap();
+        let mut content = String::new();
+        skill_md.read_to_string(&mut content).unwrap();
+        assert!(content.contains("name: Demo"));
+        drop(skill_md);
 
-    #[test]
-    fn save_zip_for_debug() {
-        let skill_dir = dirs::home_dir().unwrap().join(".skills-manager/skills/dws");
-        if !skill_dir.exists() {
-            println!("dws skill not found, skipping");
-            return;
-        }
-        let bytes = pack_skill(&skill_dir).unwrap();
-        let out = std::env::temp_dir().join("dws-ps.zip");
-        std::fs::write(&out, &bytes).unwrap();
-        println!("Saved ZIP to: {:?} ({} bytes)", out, bytes.len());
-        assert!(bytes.len() > 0);
-        assert_eq!(&bytes[0..4], &[0x50, 0x4B, 0x03, 0x04]);
+        // 子目录结构保留。
+        assert!(archive.by_name("scripts/run.sh").is_ok());
     }
 }

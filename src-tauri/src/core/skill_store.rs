@@ -4,16 +4,11 @@ use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
+use super::audit_log::{AuditDraft, AuditEntry, MAX_ENTRIES as AUDIT_MAX_ENTRIES};
 use super::crypto;
 
 /// Settings keys whose values are encrypted at rest with AES-256-GCM.
-const SENSITIVE_KEYS: &[&str] = &[
-    "proxy_url",
-    "git_backup_remote_url",
-    "skillsmp_api_key",
-    "enterprise_auth_token",
-    "enterprise_server_url",
-];
+const SENSITIVE_KEYS: &[&str] = &["proxy_url", "git_backup_remote_url"];
 
 pub struct SkillStore {
     conn: Mutex<Connection>,
@@ -53,6 +48,11 @@ pub struct SkillTargetRecord {
     pub status: String,
     pub synced_at: Option<i64>,
     pub last_error: Option<String>,
+    /// SHA-256 of the central skill source at the time of the last
+    /// successful sync. Compared against the current `skills.content_hash`
+    /// to skip redundant Copy-mode resyncs (issue #153). `None` for rows
+    /// written before this column existed, or when the source had no hash.
+    pub source_hash: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -82,6 +82,10 @@ pub struct ProjectRecord {
     pub id: String,
     pub name: String,
     pub path: String,
+    pub workspace_type: String,
+    pub linked_agent_key: Option<String>,
+    pub linked_agent_name: Option<String>,
+    pub disabled_path: Option<String>,
     pub sort_order: i32,
     pub created_at: i64,
     pub updated_at: i64,
@@ -99,6 +103,10 @@ pub struct ScenarioSkillToolToggleRecord {
 impl SkillStore {
     pub fn new(db_path: &PathBuf) -> Result<Self> {
         let conn = Connection::open(db_path)?;
+        // busy_timeout makes concurrent CLI + GUI writers wait briefly instead
+        // of failing immediately with SQLITE_BUSY. 5s is generous for any
+        // realistic write contention here.
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
 
         super::migrations::run_migrations(&conn)?;
@@ -121,12 +129,64 @@ impl SkillStore {
     pub fn insert_skill(&self, skill: &SkillRecord) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO skills (
+            "INSERT OR IGNORE INTO skills (
                 id, name, description, source_type, source_ref, source_ref_resolved, source_subpath,
                 source_branch, source_revision, remote_revision, central_path, content_hash, enabled,
                 created_at, updated_at, status, update_status, last_checked_at, last_check_error
              )
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+            params![
+                skill.id,
+                skill.name,
+                skill.description,
+                skill.source_type,
+                skill.source_ref,
+                skill.source_ref_resolved,
+                skill.source_subpath,
+                skill.source_branch,
+                skill.source_revision,
+                skill.remote_revision,
+                skill.central_path,
+                skill.content_hash,
+                skill.enabled,
+                skill.created_at,
+                skill.updated_at,
+                skill.status,
+                skill.update_status,
+                skill.last_checked_at,
+                skill.last_check_error,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn upsert_skill(&self, skill: &SkillRecord) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO skills (
+                id, name, description, source_type, source_ref, source_ref_resolved, source_subpath,
+                source_branch, source_revision, remote_revision, central_path, content_hash, enabled,
+                created_at, updated_at, status, update_status, last_checked_at, last_check_error
+             )
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)
+             ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
+                description = excluded.description,
+                source_type = excluded.source_type,
+                source_ref = excluded.source_ref,
+                source_ref_resolved = excluded.source_ref_resolved,
+                source_subpath = excluded.source_subpath,
+                source_branch = excluded.source_branch,
+                source_revision = excluded.source_revision,
+                remote_revision = excluded.remote_revision,
+                central_path = excluded.central_path,
+                content_hash = excluded.content_hash,
+                enabled = excluded.enabled,
+                updated_at = excluded.updated_at,
+                status = excluded.status,
+                update_status = excluded.update_status,
+                last_checked_at = excluded.last_checked_at,
+                last_check_error = excluded.last_check_error",
             params![
                 skill.id,
                 skill.name,
@@ -258,6 +318,16 @@ impl SkillStore {
         Ok(())
     }
 
+    pub fn update_skill_enabled(&self, id: &str, enabled: bool) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let now = chrono::Utc::now().timestamp_millis();
+        conn.execute(
+            "UPDATE skills SET enabled = ?1, updated_at = ?2 WHERE id = ?3",
+            params![enabled, now, id],
+        )?;
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn update_skill_after_install(
         &self,
@@ -286,6 +356,15 @@ impl SkillStore {
                 update_status,
                 id
             ],
+        )?;
+        Ok(())
+    }
+
+    pub fn update_skill_source_ref(&self, id: &str, source_ref: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE skills SET source_ref = ?1 WHERE id = ?2",
+            params![source_ref, id],
         )?;
         Ok(())
     }
@@ -345,8 +424,8 @@ impl SkillStore {
     pub fn insert_target(&self, target: &SkillTargetRecord) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT OR REPLACE INTO skill_targets (id, skill_id, tool, target_path, mode, status, synced_at, last_error)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT OR REPLACE INTO skill_targets (id, skill_id, tool, target_path, mode, status, synced_at, last_error, source_hash)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 target.id,
                 target.skill_id,
@@ -356,6 +435,7 @@ impl SkillStore {
                 target.status,
                 target.synced_at,
                 target.last_error,
+                target.source_hash,
             ],
         )?;
         Ok(())
@@ -364,7 +444,7 @@ impl SkillStore {
     pub fn get_targets_for_skill(&self, skill_id: &str) -> Result<Vec<SkillTargetRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, skill_id, tool, target_path, mode, status, synced_at, last_error FROM skill_targets WHERE skill_id = ?1",
+            "SELECT id, skill_id, tool, target_path, mode, status, synced_at, last_error, source_hash FROM skill_targets WHERE skill_id = ?1",
         )?;
         let rows = stmt.query_map(params![skill_id], |row| {
             Ok(SkillTargetRecord {
@@ -376,6 +456,7 @@ impl SkillStore {
                 status: row.get(5)?,
                 synced_at: row.get(6)?,
                 last_error: row.get(7)?,
+                source_hash: row.get(8)?,
             })
         })?;
         Ok(rows.filter_map(|r| r.ok()).collect())
@@ -384,7 +465,7 @@ impl SkillStore {
     pub fn get_all_targets(&self) -> Result<Vec<SkillTargetRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, skill_id, tool, target_path, mode, status, synced_at, last_error FROM skill_targets",
+            "SELECT id, skill_id, tool, target_path, mode, status, synced_at, last_error, source_hash FROM skill_targets",
         )?;
         let rows = stmt.query_map([], |row| {
             Ok(SkillTargetRecord {
@@ -396,6 +477,7 @@ impl SkillStore {
                 status: row.get(5)?,
                 synced_at: row.get(6)?,
                 last_error: row.get(7)?,
+                source_hash: row.get(8)?,
             })
         })?;
         Ok(rows.filter_map(|r| r.ok()).collect())
@@ -823,6 +905,114 @@ impl SkillStore {
         Ok(())
     }
 
+    pub fn replace_scenarios_from_metadata(
+        &self,
+        scenarios: &[super::sync_metadata::ScenarioMetaFile],
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let tx = conn.unchecked_transaction()?;
+        let metadata_ids: std::collections::HashSet<&str> =
+            scenarios.iter().map(|s| s.scenario_id.as_str()).collect();
+        {
+            let mut stmt = tx.prepare("SELECT id FROM scenarios")?;
+            let ids = stmt
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            for id in ids {
+                if !metadata_ids.contains(id.as_str()) {
+                    tx.execute("DELETE FROM scenarios WHERE id = ?1", params![id])?;
+                }
+            }
+        }
+        let now = chrono::Utc::now().timestamp_millis();
+        for scenario in scenarios {
+            tx.execute(
+                "INSERT INTO scenarios (id, name, description, icon, sort_order, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
+                 ON CONFLICT(id) DO UPDATE SET
+                    name = excluded.name,
+                    description = excluded.description,
+                    icon = excluded.icon,
+                    sort_order = excluded.sort_order,
+                    updated_at = excluded.updated_at",
+                params![
+                    scenario.scenario_id,
+                    scenario.name,
+                    scenario.description,
+                    scenario.icon,
+                    scenario.sort_order,
+                    now,
+                ],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn replace_scenario_memberships_from_metadata(
+        &self,
+        memberships: &[super::sync_metadata::ScenarioSkillMetaFile],
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let tx = conn.unchecked_transaction()?;
+        tx.execute("DELETE FROM scenario_skill_tools", [])?;
+        tx.execute("DELETE FROM scenario_skills", [])?;
+
+        // OR IGNORE / OR REPLACE don't suppress FK violations in SQLite, so we
+        // must skip memberships that reference skills or scenarios no longer in the DB.
+        let valid_skill_ids: std::collections::HashSet<String> = {
+            let mut stmt = tx.prepare("SELECT id FROM skills")?;
+            let ids: rusqlite::Result<std::collections::HashSet<String>> =
+                stmt.query_map([], |row| row.get::<_, String>(0))?.collect();
+            ids?
+        };
+        let valid_scenario_ids: std::collections::HashSet<String> = {
+            let mut stmt = tx.prepare("SELECT id FROM scenarios")?;
+            let ids: rusqlite::Result<std::collections::HashSet<String>> =
+                stmt.query_map([], |row| row.get::<_, String>(0))?.collect();
+            ids?
+        };
+
+        let now = chrono::Utc::now().timestamp_millis();
+        for member in memberships {
+            if !valid_skill_ids.contains(&member.skill_id)
+                || !valid_scenario_ids.contains(&member.scenario_id)
+            {
+                log::warn!(
+                    "Skipping stale scenario membership (scenario_id={}, skill_id={}): referenced skill or scenario no longer exists",
+                    member.scenario_id,
+                    member.skill_id
+                );
+                continue;
+            }
+            tx.execute(
+                "INSERT OR IGNORE INTO scenario_skills (scenario_id, skill_id, added_at, sort_order)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    member.scenario_id,
+                    member.skill_id,
+                    now,
+                    member.sort_order,
+                ],
+            )?;
+            for (tool, enabled) in &member.tools {
+                tx.execute(
+                    "INSERT OR REPLACE INTO scenario_skill_tools (scenario_id, skill_id, tool, enabled, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![
+                        member.scenario_id,
+                        member.skill_id,
+                        tool,
+                        enabled,
+                        now,
+                    ],
+                )?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn get_scenario_skill_tool_toggles(
         &self,
         scenario_id: &str,
@@ -894,12 +1084,19 @@ impl SkillStore {
     pub fn insert_project(&self, project: &ProjectRecord) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO projects (id, name, path, sort_order, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO projects (
+                id, name, path, workspace_type, linked_agent_key, linked_agent_name, disabled_path,
+                sort_order, created_at, updated_at
+             )
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 project.id,
                 project.name,
                 project.path,
+                project.workspace_type,
+                project.linked_agent_key,
+                project.linked_agent_name,
+                project.disabled_path,
                 project.sort_order,
                 project.created_at,
                 project.updated_at,
@@ -911,16 +1108,23 @@ impl SkillStore {
     pub fn get_all_projects(&self) -> Result<Vec<ProjectRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, name, path, sort_order, created_at, updated_at FROM projects ORDER BY sort_order, created_at",
+            "SELECT id, name, path, workspace_type, linked_agent_key, linked_agent_name, disabled_path,
+                    sort_order, created_at, updated_at
+             FROM projects
+             ORDER BY sort_order, created_at",
         )?;
         let rows = stmt.query_map([], |row| {
             Ok(ProjectRecord {
                 id: row.get(0)?,
                 name: row.get(1)?,
                 path: row.get(2)?,
-                sort_order: row.get(3)?,
-                created_at: row.get(4)?,
-                updated_at: row.get(5)?,
+                workspace_type: row.get(3)?,
+                linked_agent_key: row.get(4)?,
+                linked_agent_name: row.get(5)?,
+                disabled_path: row.get(6)?,
+                sort_order: row.get(7)?,
+                created_at: row.get(8)?,
+                updated_at: row.get(9)?,
             })
         })?;
         Ok(rows.filter_map(|r| r.ok()).collect())
@@ -929,16 +1133,23 @@ impl SkillStore {
     pub fn get_project_by_id(&self, id: &str) -> Result<Option<ProjectRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, name, path, sort_order, created_at, updated_at FROM projects WHERE id = ?1",
+            "SELECT id, name, path, workspace_type, linked_agent_key, linked_agent_name, disabled_path,
+                    sort_order, created_at, updated_at
+             FROM projects
+             WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map(params![id], |row| {
             Ok(ProjectRecord {
                 id: row.get(0)?,
                 name: row.get(1)?,
                 path: row.get(2)?,
-                sort_order: row.get(3)?,
-                created_at: row.get(4)?,
-                updated_at: row.get(5)?,
+                workspace_type: row.get(3)?,
+                linked_agent_key: row.get(4)?,
+                linked_agent_name: row.get(5)?,
+                disabled_path: row.get(6)?,
+                sort_order: row.get(7)?,
+                created_at: row.get(8)?,
+                updated_at: row.get(9)?,
             })
         })?;
         Ok(rows.next().and_then(|r| r.ok()))
@@ -989,6 +1200,205 @@ impl SkillStore {
             map.entry(row.0).or_default().push(row.1);
         }
         Ok(map)
+    }
+
+    // ── Audit log ──
+
+    /// Append an audit entry. Best-effort: errors are swallowed so callers
+    /// never have to wrap or propagate them. Auto-prunes when the table
+    /// grows beyond AUDIT_MAX_ENTRIES.
+    pub fn log_audit(&self, draft: AuditDraft) {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+
+        let conn = match self.conn.lock() {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        let insert = conn.execute(
+            "INSERT INTO audit_log (ts, action, skill_id, skill_name, tool, success, detail)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                ts,
+                draft.action,
+                draft.skill_id,
+                draft.skill_name,
+                draft.tool,
+                draft.success as i32,
+                draft.detail,
+            ],
+        );
+        if insert.is_err() {
+            return;
+        }
+        // Prune to MAX_ENTRIES newest. Cheap when under the cap (DELETE matches 0 rows).
+        let _ = conn.execute(
+            "DELETE FROM audit_log WHERE id IN (
+                 SELECT id FROM audit_log ORDER BY id DESC LIMIT -1 OFFSET ?1
+             )",
+            params![AUDIT_MAX_ENTRIES],
+        );
+    }
+
+    /// Read the most recent audit entries (newest first). When `limit` is
+    /// `None`, returns everything.
+    pub fn list_audit(&self, limit: Option<i64>) -> Result<Vec<AuditEntry>> {
+        let conn = self.conn.lock().unwrap();
+        let sql = if limit.is_some() {
+            "SELECT id, ts, action, skill_id, skill_name, tool, success, detail
+             FROM audit_log ORDER BY id DESC LIMIT ?1"
+        } else {
+            "SELECT id, ts, action, skill_id, skill_name, tool, success, detail
+             FROM audit_log ORDER BY id DESC"
+        };
+        let mut stmt = conn.prepare(sql)?;
+        let map_row = |row: &rusqlite::Row<'_>| -> rusqlite::Result<AuditEntry> {
+            Ok(AuditEntry {
+                id: row.get(0)?,
+                ts: row.get(1)?,
+                action: row.get(2)?,
+                skill_id: row.get(3)?,
+                skill_name: row.get(4)?,
+                tool: row.get(5)?,
+                success: row.get::<_, i32>(6)? != 0,
+                detail: row.get(7)?,
+            })
+        };
+        let rows = if let Some(n) = limit {
+            stmt.query_map(params![n], map_row)?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        } else {
+            stmt.query_map([], map_row)?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        Ok(rows)
+    }
+}
+
+#[cfg(test)]
+mod audit_log_tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn log_audit_appends_and_lists_newest_first() {
+        let tmp = tempdir().unwrap();
+        let store = SkillStore::new(&tmp.path().join("test.db")).unwrap();
+
+        store.log_audit(AuditDraft::new("install").skill("id1", "first").ok());
+        store.log_audit(AuditDraft::new("install").skill("id2", "second").ok());
+        store.log_audit(
+            AuditDraft::new("remove")
+                .skill("id1", "first")
+                .fail("missing"),
+        );
+
+        let entries = store.list_audit(None).unwrap();
+        assert_eq!(entries.len(), 3);
+        // Newest first
+        assert_eq!(entries[0].action, "remove");
+        assert!(!entries[0].success);
+        assert_eq!(entries[0].detail.as_deref(), Some("missing"));
+        assert_eq!(entries[2].action, "install");
+        assert_eq!(entries[2].skill_name.as_deref(), Some("first"));
+    }
+
+    #[test]
+    fn log_audit_respects_limit() {
+        let tmp = tempdir().unwrap();
+        let store = SkillStore::new(&tmp.path().join("test.db")).unwrap();
+        for i in 0..5 {
+            store.log_audit(AuditDraft::new("sync").detail(format!("{i}")).ok());
+        }
+        let entries = store.list_audit(Some(2)).unwrap();
+        assert_eq!(entries.len(), 2);
+        // Newest first — latest detail is "4".
+        assert_eq!(entries[0].detail.as_deref(), Some("4"));
+    }
+}
+
+#[cfg(test)]
+mod scenario_membership_tests {
+    use super::*;
+    use crate::core::sync_metadata::ScenarioSkillMetaFile;
+    use std::collections::BTreeMap;
+    use tempfile::tempdir;
+
+    fn sample_skill(id: &str) -> SkillRecord {
+        SkillRecord {
+            id: id.to_string(),
+            name: id.to_string(),
+            description: None,
+            source_type: "import".to_string(),
+            source_ref: None,
+            source_ref_resolved: None,
+            source_subpath: None,
+            source_branch: None,
+            source_revision: None,
+            remote_revision: None,
+            central_path: format!("/tmp/{id}"),
+            content_hash: None,
+            enabled: true,
+            created_at: 1,
+            updated_at: 1,
+            status: "ok".to_string(),
+            update_status: "local_only".to_string(),
+            last_checked_at: None,
+            last_check_error: None,
+        }
+    }
+
+    fn membership(scenario_id: &str, skill_id: &str) -> ScenarioSkillMetaFile {
+        let mut tools = BTreeMap::new();
+        tools.insert("ToolA".to_string(), true);
+        ScenarioSkillMetaFile {
+            schema_version: 1,
+            scenario_id: scenario_id.to_string(),
+            skill_id: skill_id.to_string(),
+            sort_order: 0,
+            tools,
+        }
+    }
+
+    #[test]
+    fn skips_memberships_referencing_missing_skill_or_scenario() {
+        let tmp = tempdir().unwrap();
+        let store = SkillStore::new(&tmp.path().join("test.db")).unwrap();
+
+        store.insert_scenario(&ScenarioRecord {
+            id: "s1".to_string(),
+            name: "S1".to_string(),
+            description: None,
+            icon: None,
+            sort_order: 0,
+            created_at: 1,
+            updated_at: 1,
+        })
+        .unwrap();
+        store.upsert_skill(&sample_skill("k1")).unwrap();
+
+        let memberships = vec![
+            membership("s1", "k1"),       // valid
+            membership("s1", "ghost"),    // skill missing
+            membership("ghost-s", "k1"),  // scenario missing
+        ];
+
+        // Must not panic with a FOREIGN KEY constraint failure.
+        store
+            .replace_scenario_memberships_from_metadata(&memberships)
+            .unwrap();
+
+        assert_eq!(store.get_skill_ids_for_scenario("s1").unwrap(), vec!["k1"]);
+        assert_eq!(
+            store.get_enabled_tools_for_scenario_skill("s1", "k1").unwrap(),
+            vec!["ToolA"]
+        );
+        assert!(store
+            .get_enabled_tools_for_scenario_skill("ghost-s", "k1")
+            .unwrap()
+            .is_empty());
     }
 }
 

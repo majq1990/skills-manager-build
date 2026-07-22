@@ -11,7 +11,7 @@ pub struct AppError {
     pub message: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ErrorKind {
     Database,
@@ -22,7 +22,6 @@ pub enum ErrorKind {
     InvalidInput,
     Cancelled,
     Internal,
-    Unauthorized,
 }
 
 impl fmt::Display for AppError {
@@ -70,13 +69,23 @@ impl AppError {
         }
     }
 
-    /// Convert a git operation error, detecting cancellation from the message.
-    pub fn git_or_cancelled(e: impl fmt::Display) -> Self {
+    /// Classify a git operation error into cancellation, network, or generic git error.
+    pub fn classify_git_error(e: impl fmt::Display) -> Self {
         let message = e.to_string();
         let lower = message.to_ascii_lowercase();
         if lower.contains("cancelled") || lower.contains("canceled") {
             Self {
                 kind: ErrorKind::Cancelled,
+                message,
+            }
+        } else if lower.contains("connection refused")
+            || lower.contains("could not resolve host")
+            || lower.contains("failed to connect")
+            || lower.contains("connection timed out")
+            || lower.contains("network is unreachable")
+        {
+            Self {
+                kind: ErrorKind::Network,
                 message,
             }
         } else {
@@ -107,13 +116,6 @@ impl AppError {
         Self {
             kind: ErrorKind::Internal,
             message: e.to_string(),
-        }
-    }
-
-    pub fn unauthorized(msg: impl Into<String>) -> Self {
-        Self {
-            kind: ErrorKind::Unauthorized,
-            message: msg.into(),
         }
     }
 }
@@ -150,27 +152,41 @@ mod tests {
     use super::*;
 
     #[test]
-    fn git_or_cancelled_detects_cancelled() {
-        let err = AppError::git_or_cancelled("Installation cancelled by user");
+    fn classify_git_error_detects_cancelled() {
+        let err = AppError::classify_git_error("Installation cancelled by user");
         assert!(matches!(err.kind, ErrorKind::Cancelled));
     }
 
     #[test]
-    fn git_or_cancelled_detects_canceled_american_spelling() {
-        let err = AppError::git_or_cancelled("Operation was canceled");
+    fn classify_git_error_detects_canceled_american_spelling() {
+        let err = AppError::classify_git_error("Operation was canceled");
         assert!(matches!(err.kind, ErrorKind::Cancelled));
     }
 
     #[test]
-    fn git_or_cancelled_regular_git_error() {
-        let err = AppError::git_or_cancelled("Failed to push to remote");
+    fn classify_git_error_regular_git_error() {
+        let err = AppError::classify_git_error("Failed to push to remote");
         assert!(matches!(err.kind, ErrorKind::Git));
     }
 
     #[test]
-    fn git_or_cancelled_case_insensitive() {
-        let err = AppError::git_or_cancelled("CANCELLED by system");
+    fn classify_git_error_case_insensitive() {
+        let err = AppError::classify_git_error("CANCELLED by system");
         assert!(matches!(err.kind, ErrorKind::Cancelled));
+    }
+
+    #[test]
+    fn classify_git_error_detects_connection_refused() {
+        let err = AppError::classify_git_error("fatal: unable to access 'https://gitea.example.com/user/repo.git/': Failed to connect to gitea.example.com port 443: Connection refused");
+        assert!(matches!(err.kind, ErrorKind::Network));
+    }
+
+    #[test]
+    fn classify_git_error_detects_could_not_resolve_host() {
+        let err = AppError::classify_git_error(
+            "fatal: unable to access: Could not resolve host: example.com",
+        );
+        assert!(matches!(err.kind, ErrorKind::Network));
     }
 
     #[test]

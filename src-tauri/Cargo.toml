@@ -1,11 +1,12 @@
 [package]
 name = "skills-manager"
-version = "1.12.0"
+version = "1.24.0"
 description = "Skills Manager - AI Agent Skills Central Manager"
 authors = ["tianliang"]
 license = "MIT"
 edition = "2021"
 rust-version = "1.77.2"
+default-run = "skills-manager"
 
 [lib]
 name = "app_lib"
@@ -23,16 +24,19 @@ tauri-plugin-log = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-opener = "2"
+tauri-plugin-clipboard-manager = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-single-instance = "2"
 rusqlite = { version = "0.31", features = ["bundled"] }
-uuid = { version = "1", features = ["v4"] }
+uuid = { version = "1", features = ["v4", "v7"] }
 sha2 = "0.10"
 dirs = "5.0"
 walkdir = "2.5"
+fs2 = "0.4"
+unicode-normalization = "0.1"
+caseless = "0.2"
 reqwest = { version = "0.12", features = ["blocking", "json", "multipart"] }
 anyhow = "1.0"
-open = "5.0"
 chrono = "0.4"
 serde_yaml = "0.9"
 git2 = { version = "0.19", features = ["vendored-openssl"] }
@@ -46,6 +50,9 @@ semver = "1"
 aes-gcm = "0.10"
 rand = "0.8"
 image = { version = "0.25", default-features = false, features = ["png", "ico"] }
+notify = "6.1.1"
+open = "5.0"
+clap = { version = "4.5", features = ["derive"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

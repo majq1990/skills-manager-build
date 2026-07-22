@@ -1,88 +1,214 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   Folder,
   FolderOpen,
   RefreshCw,
-  CheckCircle2,
-  Circle,
   Globe,
   Link as LinkIcon,
   Copy,
   Settings2,
-  Github,
   Loader2,
   ExternalLink,
   Sun,
   Moon,
   Monitor,
+  AlertTriangle,
   BookOpen,
+  Bug,
+  MessageSquarePlus,
   Download,
+  FileArchive,
   Type,
-  Key,
   Pencil,
   RotateCcw,
   Plus,
   Trash2,
   X,
   Check,
+  ChevronDown,
+  ChevronRight,
+  GripVertical,
 } from "lucide-react";
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  useSortable,
+  arrayMove,
+  rectSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { listen } from "@tauri-apps/api/event";
+import { getVersion } from "@tauri-apps/api/app";
+import { writeText as clipboardWriteText } from "@tauri-apps/plugin-clipboard-manager";
 import { check as checkUpdater } from "@tauri-apps/plugin-updater";
 import { open as dialogOpen, confirm as dialogConfirm } from "@tauri-apps/plugin-dialog";
 import { cn } from "../utils";
 import { useApp } from "../context/AppContext";
 import { useThemeContext } from "../context/ThemeContext";
+import { AgentIcon } from "../components/AgentIcon";
+import { FeedbackDialog } from "../components/FeedbackDialog";
 import * as api from "../lib/tauri";
+import { applyTextSize } from "../lib/textScale";
+import { getErrorMessage } from "../lib/error";
 import type { AppUpdateInfo } from "../lib/tauri";
 import type { Theme } from "../hooks/useTheme";
 
 const IS_WINDOWS = navigator.userAgent.includes("Windows");
-const TEXT_SIZE_ZOOM_MAP: Record<string, string> = {
-  small: "0.9",
-  default: "1",
-  large: "1.1",
-  xlarge: "1.2",
-};
 
-function applyTextSize(size: string) {
-  document.documentElement.style.zoom = TEXT_SIZE_ZOOM_MAP[size] || "1";
+const MAINSTREAM_AGENT_KEYS = new Set([
+  "claude_code",
+  "cursor",
+  "codex",
+  "gemini_cli",
+  "github_copilot",
+  "opencode",
+  "hermes",
+  "openclaw",
+  "windsurf",
+  "kiro",
+  "antigravity",
+  "amp",
+]);
+
+function compactHomePath(path: string) {
+  return path
+    .replace(/\/Users\/[^/]+/, "~")
+    .replace(/\/home\/[^/]+/, "~")
+    .replace(/^[A-Za-z]:\\Users\\[^\\]+/, "~");
+}
+
+interface SortableAgentCardProps {
+  agentKey: string;
+  dragLabel: string;
+  children: (dragHandle: React.ReactNode) => React.ReactNode;
+}
+
+function SortableAgentCard({ agentKey, dragLabel, children }: SortableAgentCardProps) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: agentKey });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : undefined,
+  };
+
+  const handle = (
+    <button
+      type="button"
+      ref={setActivatorNodeRef}
+      {...listeners}
+      onClick={(e) => e.stopPropagation()}
+      className="mt-0.5 flex shrink-0 cursor-grab items-center justify-center rounded text-faint outline-none transition-colors hover:text-muted active:cursor-grabbing"
+      title={dragLabel}
+      aria-label={dragLabel}
+    >
+      <GripVertical className="h-3.5 w-3.5" />
+    </button>
+  );
+
+  return (
+    <div ref={setNodeRef} style={style} {...attributes}>
+      {children(handle)}
+    </div>
+  );
+}
+
+interface AgentGroupDndProps {
+  items: api.ToolInfo[];
+  sensors: ReturnType<typeof useSensors>;
+  dragLabel: string;
+  onDragEnd: (event: DragEndEvent, groupKeys: string[]) => void;
+  renderAgentCard: (agent: api.ToolInfo, dragHandle?: React.ReactNode) => React.ReactNode;
+}
+
+function AgentGroupDnd({ items, sensors, dragLabel, onDragEnd, renderAgentCard }: AgentGroupDndProps) {
+  const groupKeys = items.map((t) => t.key);
+  return (
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCenter}
+      onDragEnd={(e) => onDragEnd(e, groupKeys)}
+    >
+      <SortableContext items={groupKeys} strategy={rectSortingStrategy}>
+        <div className="grid grid-cols-1 gap-1.5 md:grid-cols-2 xl:grid-cols-3">
+          {items.map((agent) => (
+            <SortableAgentCard key={agent.key} agentKey={agent.key} dragLabel={dragLabel}>
+              {(handle) => renderAgentCard(agent, handle)}
+            </SortableAgentCard>
+          ))}
+        </div>
+      </SortableContext>
+    </DndContext>
+  );
 }
 
 export function Settings() {
   const { t, i18n } = useTranslation();
-  const { tools, scenarios, refreshTools, openHelp } = useApp();
+  const { tools, presets, refreshTools, openHelp } = useApp();
   const [togglingTools, setTogglingTools] = useState<Set<string>>(new Set());
   const { theme, setTheme } = useThemeContext();
   const [syncMode, setSyncMode] = useState("symlink");
-  const [defaultScenario, setDefaultScenario] = useState("");
+  const [defaultPreset, setDefaultPreset] = useState("");
   const [closeAction, setCloseAction] = useState("");
   const [showTrayIcon, setShowTrayIcon] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [openingRepo, setOpeningRepo] = useState(false);
-  const [openingGithub, setOpeningGithub] = useState(false);
+  const [reportingIssue, setReportingIssue] = useState(false);
+  const [exportingLogs, setExportingLogs] = useState(false);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [lastPanic, setLastPanic] = useState<api.PanicInfo | null>(null);
   const [centralRepoPath, setCentralRepoPath] = useState("");
+  const [centralRepoPathOverride, setCentralRepoPathOverride] = useState<string | null>(null);
+  const [editingCentralRepoPath, setEditingCentralRepoPath] = useState(false);
+  const [centralRepoPathInput, setCentralRepoPathInput] = useState("");
+  const [savingCentralRepoPath, setSavingCentralRepoPath] = useState(false);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [updateInfo, setUpdateInfo] = useState<AppUpdateInfo | null>(null);
+  const [appVersion, setAppVersion] = useState("");
+  useEffect(() => {
+    getVersion().then(setAppVersion).catch(() => {});
+  }, []);
   const [installing, setInstalling] = useState(false);
   const [gitRemoteInput, setGitRemoteInput] = useState("");
   const [gitRemoteSaving, setGitRemoteSaving] = useState(false);
   const [proxyInput, setProxyInput] = useState("");
   const [proxySaving, setProxySaving] = useState(false);
   const [textSize, setTextSize] = useState("default");
-  const [skillsmpApiKey, setSkillsmpApiKey] = useState("");
-  const [skillsmpSaving, setSkillsmpSaving] = useState(false);
+  const [autoUpdateInterval, setAutoUpdateInterval] = useState("off");
+  const [autoUpdateApply, setAutoUpdateApply] = useState("off");
+  const [autoUpdateLastRun, setAutoUpdateLastRun] = useState<string | null>(null);
   // Agent path editing
   const [editingPathKey, setEditingPathKey] = useState<string | null>(null);
   const [editingPathValue, setEditingPathValue] = useState("");
+  // Project path editing (custom agents only)
+  const [editingProjectPathKey, setEditingProjectPathKey] = useState<string | null>(null);
+  const [editingProjectPathValue, setEditingProjectPathValue] = useState("");
   // Custom agent dialog
   const [showAddCustom, setShowAddCustom] = useState(false);
   const [customName, setCustomName] = useState("");
   const [customPath, setCustomPath] = useState("");
+  const [customProjectPath, setCustomProjectPath] = useState("");
   const [addingCustom, setAddingCustom] = useState(false);
+  const [showMoreAgents, setShowMoreAgents] = useState(false);
 
-  const GITHUB_URL = "https://github.com/xingkongliang/skills-manager";
 
   const startEditPath = useCallback((key: string, currentPath: string) => {
     setEditingPathKey(key);
@@ -99,6 +225,24 @@ export function Settings() {
       toast.error(String(e));
     } finally {
       setEditingPathKey(null);
+    }
+  };
+
+  const startEditProjectPath = useCallback((key: string, currentPath: string | null) => {
+    setEditingProjectPathKey(key);
+    setEditingProjectPathValue(currentPath ?? "");
+  }, []);
+
+  const handleSaveProjectPath = async () => {
+    if (!editingProjectPathKey) return;
+    const trimmed = editingProjectPathValue.trim();
+    try {
+      await api.setCustomToolProjectPath(editingProjectPathKey, trimmed || null);
+      await refreshTools();
+      toast.success(t("settings.pathSaved"));
+      setEditingProjectPathKey(null);
+    } catch (e) {
+      toast.error(String(e));
     }
   };
 
@@ -139,16 +283,18 @@ export function Settings() {
   const handleAddCustomAgent = async () => {
     const trimName = customName.trim();
     const trimPath = customPath.trim();
+    const trimProjectPath = customProjectPath.trim();
     if (!trimName || !trimPath) return;
     const trimKey = generateCustomAgentKey(trimName);
     setAddingCustom(true);
     try {
-      await api.addCustomTool(trimKey, trimName, trimPath);
+      await api.addCustomTool(trimKey, trimName, trimPath, trimProjectPath || undefined);
       await refreshTools();
       toast.success(t("settings.customAgentAdded"));
       setShowAddCustom(false);
       setCustomName("");
       setCustomPath("");
+      setCustomProjectPath("");
     } catch (e) {
       toast.error(String(e));
     } finally {
@@ -169,8 +315,12 @@ export function Settings() {
   };
 
   useEffect(() => {
+    api.checkLastPanic().then(setLastPanic).catch(() => {});
+  }, []);
+
+  useEffect(() => {
     api.getSettings("sync_mode").then((v) => { if (v) setSyncMode(v); });
-    api.getSettings("default_scenario").then((v) => { if (v) setDefaultScenario(v); });
+    api.getSettings("default_scenario").then((v) => { if (v) setDefaultPreset(v); });
     api.getSettings("proxy_url").then((v) => { setProxyInput(v ?? ""); });
     api.getSettings("close_action").then((v) => { setCloseAction(v ?? ""); });
     api.getSettings("show_tray_icon").then((v) => {
@@ -178,8 +328,21 @@ export function Settings() {
       setShowTrayIcon(!(normalized === "false" || normalized === "0" || normalized === "no" || normalized === "off"));
     });
     api.getSettings("text_size").then((v) => { if (v) { setTextSize(v); applyTextSize(v); } });
-    api.getSettings("skillsmp_api_key").then((v) => { if (v) setSkillsmpApiKey(v); });
-    api.getCentralRepoPath().then(setCentralRepoPath).catch(() => {});
+    api.getSettings("auto_update_check_interval").then((v) => { if (v) setAutoUpdateInterval(v); });
+    api.getSettings("auto_update_apply").then((v) => { if (v) setAutoUpdateApply(v); });
+    // The `skills-auto-updated` listener may populate this concurrently, so
+    // keep whichever timestamp is newer rather than blindly overwriting.
+    api.getSettings("auto_update_last_run_at").then((v) => {
+      if (!v) return;
+      setAutoUpdateLastRun((prev) =>
+        prev && Date.parse(prev) >= Date.parse(v) ? prev : v
+      );
+    });
+    api.getCentralRepoPath().then((path) => {
+      setCentralRepoPath(path);
+      setCentralRepoPathInput(path);
+    }).catch(() => {});
+    api.getCentralRepoPathOverride().then(setCentralRepoPathOverride).catch(() => {});
 
     (async () => {
       const savedRemote = (await api.getSettings("git_backup_remote_url").catch(() => null))?.trim() || "";
@@ -236,8 +399,8 @@ export function Settings() {
     await api.setSettings("sync_mode", mode);
   };
 
-  const handleDefaultScenarioChange = async (id: string) => {
-    setDefaultScenario(id);
+  const handleDefaultPresetChange = async (id: string) => {
+    setDefaultPreset(id);
     await api.setSettings("default_scenario", id);
   };
 
@@ -268,6 +431,36 @@ export function Settings() {
     api.setSettings("text_size", size);
   };
 
+  const handleAutoUpdateIntervalChange = async (value: string) => {
+    setAutoUpdateInterval(value);
+    await api.setSettings("auto_update_check_interval", value);
+  };
+
+  const handleAutoUpdateApplyChange = async (value: string) => {
+    setAutoUpdateApply(value);
+    await api.setSettings("auto_update_apply", value);
+  };
+
+  // Keep the last-run timestamp in sync with both the background scheduler
+  // and the tray's manual "Check for skill updates" so the user doesn't see
+  // a stale value if Settings is open. Backend always persists `last_run_at`
+  // first and then emits with the same `ran_at`, so reading from the payload
+  // avoids a follow-up DB roundtrip.
+  useEffect(() => {
+    type AutoUpdatedPayload = { ran_at?: string };
+    const unlistenPromise = listen<AutoUpdatedPayload>("skills-auto-updated", (event) => {
+      const ranAt = event.payload?.ran_at;
+      if (ranAt) {
+        setAutoUpdateLastRun(ranAt);
+      }
+    });
+    return () => {
+      unlistenPromise
+        .then((unlisten) => unlisten())
+        .catch(() => {});
+    };
+  }, []);
+
   const handleOpenRepoInFinder = async () => {
     try {
       setOpeningRepo(true);
@@ -280,15 +473,157 @@ export function Settings() {
     }
   };
 
-  const handleOpenGithub = async () => {
+  const handleStartEditCentralRepoPath = () => {
+    setCentralRepoPathInput(centralRepoPathOverride ?? centralRepoPath);
+    setEditingCentralRepoPath(true);
+  };
+
+  const handleSaveCentralRepoPath = async () => {
+    const trimmed = centralRepoPathInput.trim();
+    if (!trimmed) {
+      toast.error(t("settings.repoPathEmpty"));
+      return;
+    }
+    setSavingCentralRepoPath(true);
     try {
-      setOpeningGithub(true);
-      await openUrl(GITHUB_URL);
+      const nextPath = await api.setCentralRepoPath(trimmed);
+      setCentralRepoPath(nextPath);
+      setCentralRepoPathOverride(nextPath);
+      setEditingCentralRepoPath(false);
+      toast.success(t("settings.repoPathSaved"));
+      toast.info(t("settings.repoPathRestartNotice"));
     } catch (error) {
-      console.error("Failed to open GitHub repository", error);
+      toast.error(String(error));
+    } finally {
+      setSavingCentralRepoPath(false);
+    }
+  };
+
+  const handleResetCentralRepoPath = async () => {
+    setSavingCentralRepoPath(true);
+    try {
+      const nextPath = await api.setCentralRepoPath(null);
+      setCentralRepoPath(nextPath);
+      setCentralRepoPathOverride(null);
+      setCentralRepoPathInput(nextPath);
+      setEditingCentralRepoPath(false);
+      toast.success(t("settings.repoPathReset"));
+      toast.info(t("settings.repoPathRestartNotice"));
+    } catch (error) {
+      toast.error(String(error));
+    } finally {
+      setSavingCentralRepoPath(false);
+    }
+  };
+
+  const handleExportLogs = async () => {
+    setExportingLogs(true);
+    try {
+      const result = await api.exportLogsZip();
+      toast.success(t("settings.exportLogsDone", { count: result.file_count }), {
+        description: result.zip_path,
+      });
+    } catch (error) {
+      console.error("Failed to export logs", error);
+      toast.error(t("settings.exportLogsFailed"));
+    } finally {
+      setExportingLogs(false);
+    }
+  };
+
+  const handleDismissPanic = async () => {
+    try {
+      await api.clearLastPanic();
+    } catch (err) {
+      console.warn("Failed to clear last_panic.log", err);
+    }
+    setLastPanic(null);
+  };
+
+  const handleReportIssue = async () => {
+    setReportingIssue(true);
+    try {
+      const [info, logExcerpt, panicInfo] = await Promise.all([
+        api.getDiagnosticInfo(),
+        api.getRecentLogExcerpt().catch((err) => {
+          console.warn("Failed to read log excerpt", err);
+          return null;
+        }),
+        api.checkLastPanic().catch(() => null),
+      ]);
+      const enabledBuiltin = enabledTools
+        .filter((tool) => !tool.is_custom)
+        .map((tool) => tool.key);
+      const enabledCustomCount = enabledTools.filter((tool) => tool.is_custom).length;
+      const agentsLine = enabledBuiltin.length === 0 && enabledCustomCount === 0
+        ? "(none)"
+        : [
+            enabledBuiltin.join(", "),
+            enabledCustomCount > 0 ? `${enabledCustomCount} custom` : "",
+          ].filter(Boolean).join(", ");
+      const parts = [
+        "**Diagnostics** (auto-collected by Skills Manager)",
+        "",
+        `- App version: \`${info.app_version}\``,
+        `- OS: \`${info.os} ${info.os_version} (${info.arch})\``,
+        `- UI locale: \`${i18n.language}\``,
+        `- Enabled agents: ${agentsLine}`,
+        `- Central repo: \`${info.central_repo_path}\`${info.central_repo_path_overridden ? " (custom path)" : ""}`,
+      ];
+      if (panicInfo) {
+        parts.push(
+          "",
+          `**Last panic** (${panicInfo.timestamp})`,
+          "",
+          "```",
+          panicInfo.message,
+          "```",
+        );
+      }
+      if (logExcerpt) {
+        parts.push(
+          "",
+          `**Recent log** (\`${logExcerpt.log_path}\`, ${logExcerpt.line_count} lines${logExcerpt.has_warnings ? ", includes warnings/errors" : ""})`,
+          "",
+          "```log",
+          logExcerpt.excerpt,
+          "```",
+          "",
+          `> ${t("settings.reportIssueExportHint")}`,
+        );
+      }
+      const md = parts.join("\n");
+      let copied = false;
+      try {
+        await clipboardWriteText(md);
+        copied = true;
+      } catch (err) {
+        console.error("Clipboard write failed", err);
+        try {
+          await navigator.clipboard.writeText(md);
+          copied = true;
+        } catch (err2) {
+          console.error("Browser clipboard fallback also failed", err2);
+        }
+      }
+      if (copied) {
+        toast.success(t("settings.diagnosticsCopied"));
+        if (panicInfo) {
+          try {
+            await api.clearLastPanic();
+          } catch (err) {
+            console.warn("Failed to clear last_panic.log", err);
+          }
+          setLastPanic(null);
+        }
+      } else {
+        toast.message(t("settings.diagnosticsCopyManual"), { description: md });
+      }
+    } catch (error) {
+      console.error("Failed to prepare diagnostics", error);
       toast.error(t("common.error"));
     } finally {
-      setOpeningGithub(false);
+      setReportingIssue(false);
     }
   };
 
@@ -331,18 +666,6 @@ export function Settings() {
     }
   };
 
-  const handleSaveSkillsmpApiKey = async () => {
-    setSkillsmpSaving(true);
-    try {
-      await api.setSettings("skillsmp_api_key", skillsmpApiKey.trim());
-      toast.success(t("common.success"));
-    } catch {
-      toast.error(t("common.error"));
-    } finally {
-      setSkillsmpSaving(false);
-    }
-  };
-
   const handleSaveGitRemote = async () => {
     setGitRemoteSaving(true);
     try {
@@ -374,6 +697,7 @@ export function Settings() {
 
   const fieldClass =
     "h-8 rounded-[4px] border border-border-subtle bg-background px-2.5 text-[13px] text-secondary outline-none transition-colors focus:border-border";
+  const selectClass = `${fieldClass} min-w-[180px] appearance-none pr-8`;
   const actionButtonClass =
     "inline-flex h-8 items-center gap-1.5 rounded-[4px] border px-2.5 text-[13px] font-medium transition-colors outline-none disabled:opacity-60";
   const segmentedButtonClass =
@@ -384,9 +708,271 @@ export function Settings() {
     { value: "dark", label: t("settings.themeDark"), icon: Moon },
     { value: "system", label: t("settings.themeSystem"), icon: Monitor },
   ];
+  const installedTools = useMemo(() => tools.filter((tool) => tool.installed), [tools]);
+  const enabledTools = useMemo(
+    () => installedTools.filter((tool) => tool.enabled),
+    [installedTools]
+  );
+  const customTools = useMemo(() => tools.filter((tool) => tool.is_custom), [tools]);
+  const builtInTools = useMemo(() => tools.filter((tool) => !tool.is_custom), [tools]);
+  const mainstreamTools = useMemo(
+    () => builtInTools.filter((tool) => MAINSTREAM_AGENT_KEYS.has(tool.key)),
+    [builtInTools]
+  );
+  const secondaryTools = useMemo(
+    () => builtInTools.filter((tool) => !MAINSTREAM_AGENT_KEYS.has(tool.key)),
+    [builtInTools]
+  );
+
+  const dragSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+
+  const handleAgentDragEnd = useCallback(
+    async (event: DragEndEvent, groupKeys: string[]) => {
+      const { active, over } = event;
+      if (!over || active.id === over.id) return;
+      const oldIdx = groupKeys.indexOf(String(active.id));
+      const newIdx = groupKeys.indexOf(String(over.id));
+      if (oldIdx < 0 || newIdx < 0) return;
+
+      const newGroupKeys = arrayMove(groupKeys, oldIdx, newIdx);
+      const fullOrder = tools.map((t) => t.key);
+      const groupKeySet = new Set(groupKeys);
+      let cursor = 0;
+      const newFullOrder = fullOrder.map((k) =>
+        groupKeySet.has(k) ? newGroupKeys[cursor++] : k
+      );
+
+      try {
+        await api.setToolOrder(newFullOrder);
+        await refreshTools();
+      } catch (e) {
+        toast.error(getErrorMessage(e, t("common.error")));
+      }
+    },
+    [tools, refreshTools, t]
+  );
   const displayedRepoPath = centralRepoPath
-    ? centralRepoPath.replace(/\/Users\/[^/]+/, "~").replace(/\/home\/[^/]+/, "~").replace(/^[A-Za-z]:\\Users\\[^\\]+/, "~")
-    : "~/.skills-manager/";
+    ? compactHomePath(centralRepoPath)
+    : t("common.loading");
+
+  const renderAgentCard = (agent: typeof tools[number], dragHandle?: React.ReactNode) => (
+    <div
+      className={cn(
+        "group relative flex flex-col gap-1.5 rounded-[6px] border px-3 py-2.5 transition-colors",
+        agent.installed && agent.enabled
+          ? "border-border bg-surface"
+          : agent.installed
+            ? "border-border-subtle bg-surface"
+            : "border-border-subtle bg-bg-secondary"
+      )}
+    >
+      <div className="flex items-start gap-2">
+        {dragHandle}
+        <div className="mt-0.5 shrink-0">
+          {agent.installed ? (
+            <button
+              type="button"
+              role="switch"
+              aria-checked={agent.enabled}
+              onClick={() => handleToggleTool(agent.key, !agent.enabled)}
+              disabled={togglingTools.has(agent.key)}
+              title={agent.enabled ? t("settings.disableAgent") : t("settings.enableAgent")}
+              className={cn(
+                "relative inline-flex h-4 w-7 shrink-0 items-center rounded-full outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent",
+                agent.enabled ? "bg-emerald-500" : "bg-zinc-300 dark:bg-zinc-600",
+                togglingTools.has(agent.key) ? "cursor-wait opacity-60" : "cursor-pointer"
+              )}
+            >
+              <span
+                className={cn(
+                  "inline-flex h-3 w-3 items-center justify-center rounded-full bg-white shadow transition-transform",
+                  agent.enabled ? "translate-x-3.5" : "translate-x-0.5"
+                )}
+              >
+                {togglingTools.has(agent.key) && (
+                  <Loader2 className="h-2 w-2 animate-spin text-muted" />
+                )}
+              </span>
+            </button>
+          ) : (
+            <div
+              title={t("settings.notInstalled") as string}
+              className="relative inline-flex h-4 w-7 shrink-0 items-center rounded-full bg-zinc-200 opacity-60 dark:bg-zinc-700"
+            >
+              <span className="inline-flex h-3 w-3 translate-x-0.5 rounded-full bg-white/80 shadow" />
+            </div>
+          )}
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <AgentIcon
+                  agentKey={agent.key}
+                  displayName={agent.display_name}
+                  className="h-5 w-5 rounded-[5px]"
+                />
+                <h3 className={cn("truncate text-[13px] font-medium", agent.installed ? "text-secondary" : "text-muted")}>
+                  {agent.display_name}
+                </h3>
+                <span
+                  className={cn(
+                    "shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium",
+                    agent.installed
+                      ? agent.enabled
+                        ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                        : "bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                      : "bg-surface-hover text-muted"
+                  )}
+                >
+                  {agent.installed
+                    ? agent.enabled
+                      ? t("settings.enabledState")
+                      : t("settings.disabledState")
+                    : t("settings.notInstalled")}
+                </span>
+              </div>
+            </div>
+            <div className="hidden shrink-0 items-center gap-0.5 group-hover:flex">
+              {agent.has_path_override && !agent.is_custom && (
+                <button
+                  onClick={() => handleResetPath(agent.key)}
+                  className="p-0.5 text-muted hover:text-amber-500 outline-none"
+                  title={t("settings.resetPath")}
+                >
+                  <RotateCcw className="h-3 w-3" />
+                </button>
+              )}
+              <button
+                onClick={() => startEditPath(agent.key, agent.skills_dir)}
+                className="p-0.5 text-muted hover:text-accent outline-none"
+                title={t("settings.editPath")}
+              >
+                <Pencil className="h-3 w-3" />
+              </button>
+              {agent.is_custom && (
+                <button
+                  onClick={() => handleRemoveCustomAgent(agent.key, agent.display_name)}
+                  className="p-0.5 text-muted hover:text-red-500 outline-none"
+                  title={t("settings.removeCustomAgent")}
+                >
+                  <Trash2 className="h-3 w-3" />
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="mt-0.5 flex flex-wrap items-center gap-1">
+            {agent.is_custom && (
+              <span className="rounded-full bg-sky-500/10 px-2 py-0.5 text-[10px] font-medium text-sky-700 dark:text-sky-300">
+                {t("settings.customAgent")}
+              </span>
+            )}
+            {agent.is_custom && agent.project_relative_skills_dir && (
+              <span className="rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300">
+                {t("settings.projectAgentSupported")}
+              </span>
+            )}
+            {agent.has_path_override && !agent.is_custom && (
+              <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">
+                {t("settings.pathOverridden")}
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {editingPathKey === agent.key ? (
+        <div className="flex items-center gap-1">
+          <input
+            type="text"
+            value={editingPathValue}
+            onChange={(e) => setEditingPathValue(e.target.value)}
+            className="h-7 min-w-0 flex-1 rounded border border-border-subtle bg-background px-1.5 text-[12px] font-mono text-secondary outline-none focus:border-accent"
+            autoFocus
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleSavePath();
+              if (e.key === "Escape") setEditingPathKey(null);
+            }}
+          />
+          <button
+            onClick={() => handleBrowsePath(setEditingPathValue)}
+            className="shrink-0 p-1 text-muted hover:text-accent outline-none"
+            title={t("settings.selectFolder")}
+          >
+            <FolderOpen className="h-3 w-3" />
+          </button>
+          <button
+            onClick={handleSavePath}
+            className="shrink-0 p-1 text-emerald-500 hover:text-emerald-400 outline-none"
+          >
+            <Check className="h-3 w-3" />
+          </button>
+          <button
+            onClick={() => setEditingPathKey(null)}
+            className="shrink-0 p-1 text-muted hover:text-secondary outline-none"
+          >
+            <X className="h-3 w-3" />
+          </button>
+        </div>
+      ) : (
+        <div className="space-y-1">
+          <p className="truncate text-[12px] font-mono leading-tight text-muted" title={agent.skills_dir}>
+            {agent.installed ? compactHomePath(agent.skills_dir) : t("settings.notInstalled")}
+          </p>
+          {agent.is_custom && (
+            editingProjectPathKey === agent.key ? (
+              <div className="flex items-center gap-1">
+                <input
+                  type="text"
+                  value={editingProjectPathValue}
+                  onChange={(e) => setEditingProjectPathValue(e.target.value)}
+                  placeholder={t("settings.projectSkillsPathPlaceholder")}
+                  className="h-7 min-w-0 flex-1 rounded border border-border-subtle bg-background px-1.5 text-[12px] font-mono text-secondary outline-none focus:border-accent"
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleSaveProjectPath();
+                    if (e.key === "Escape") setEditingProjectPathKey(null);
+                  }}
+                />
+                <button
+                  onClick={handleSaveProjectPath}
+                  className="shrink-0 p-1 text-emerald-500 hover:text-emerald-400 outline-none"
+                >
+                  <Check className="h-3 w-3" />
+                </button>
+                <button
+                  onClick={() => setEditingProjectPathKey(null)}
+                  className="shrink-0 p-1 text-muted hover:text-secondary outline-none"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() =>
+                  startEditProjectPath(agent.key, agent.project_relative_skills_dir)
+                }
+                className="group/projpath flex w-full items-center gap-1 truncate text-left text-[12px] font-mono leading-tight text-muted outline-none hover:text-secondary"
+                title={agent.project_relative_skills_dir ?? t("settings.projectSkillsPathDesc")}
+              >
+                <span className="truncate">
+                  {agent.project_relative_skills_dir
+                    ? t("settings.projectSkillsPathValue", {
+                        path: agent.project_relative_skills_dir,
+                      })
+                    : t("settings.projectSkillsPathEmpty")}
+                </span>
+                <Pencil className="h-2.5 w-2.5 shrink-0 opacity-0 transition-opacity group-hover/projpath:opacity-100" />
+              </button>
+            )
+          )}
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <div className="app-page app-page-narrow">
@@ -401,9 +987,11 @@ export function Settings() {
         {/* Agent status */}
         <section>
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <h2 className="app-section-title">
-              {t("settings.supportedAgents")} ({tools.filter((t) => t.installed).length}/{tools.length})
-            </h2>
+            <div>
+              <h2 className="app-section-title">
+                {t("settings.supportedAgents")} ({installedTools.length}/{tools.length})
+              </h2>
+            </div>
             <div className="flex flex-wrap items-center gap-3">
               <button
                 onClick={() => setShowAddCustom(true)}
@@ -437,6 +1025,12 @@ export function Settings() {
                 {t("settings.refresh")}
               </button>
             </div>
+          </div>
+
+          <div className="mb-3 flex flex-wrap items-center gap-3 text-[13px] text-muted">
+            <span>{t("settings.detectedAgents")} <span className="font-medium text-secondary">{installedTools.length}</span></span>
+            <span>{t("settings.enabledAgents")} <span className="font-medium text-secondary">{enabledTools.length}</span></span>
+            <span>{t("settings.customAgents")} <span className="font-medium text-secondary">{customTools.length}</span></span>
           </div>
 
           {/* Add custom agent form */}
@@ -475,125 +1069,88 @@ export function Settings() {
                     <FolderOpen className="w-3 h-3" />
                     {t("settings.selectFolder")}
                   </button>
-                  <button
-                    onClick={handleAddCustomAgent}
-                    disabled={addingCustom || !customName.trim() || !customPath.trim()}
-                    className={`${actionButtonClass} bg-accent text-white border-accent hover:opacity-90 disabled:opacity-50`}
-                  >
-                    {addingCustom ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
-                    {t("settings.addAgent")}
-                  </button>
                 </div>
+              </div>
+              <div>
+                <label className="text-[12px] text-muted mb-1 block">
+                  {t("settings.projectSkillsPath")}
+                </label>
+                <input
+                  type="text"
+                  value={customProjectPath}
+                  onChange={(e) => setCustomProjectPath(e.target.value)}
+                  placeholder={t("settings.projectSkillsPathPlaceholder")}
+                  className={`${fieldClass} w-full font-mono`}
+                />
+                <p className="mt-1 text-[12px] text-muted">
+                  {t("settings.projectSkillsPathDesc")}
+                </p>
+              </div>
+              <div className="flex justify-end">
+                <button
+                  onClick={handleAddCustomAgent}
+                  disabled={addingCustom || !customName.trim() || !customPath.trim()}
+                  className={`${actionButtonClass} bg-accent text-white border-accent hover:opacity-90 disabled:opacity-50`}
+                >
+                  {addingCustom ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+                  {t("settings.addAgent")}
+                </button>
               </div>
             </div>
           )}
 
-          <div className="grid grid-cols-3 gap-2 md:grid-cols-4">
-            {tools.map((agent, i) => (
-              <div
-                key={i}
-                className={cn(
-                  "group relative flex flex-col gap-1 p-2.5 rounded-[4px] border transition-colors",
-                  agent.installed && agent.enabled
-                    ? "bg-surface border-border-subtle hover:border-border"
-                    : "bg-bg-secondary border-border-subtle opacity-50"
-                )}
-              >
-                <div className="flex items-center gap-2">
-                  {agent.installed ? (
-                    <button
-                      onClick={() => handleToggleTool(agent.key, !agent.enabled)}
-                      disabled={togglingTools.has(agent.key)}
-                      className="shrink-0 outline-none"
-                      title={agent.enabled ? t("settings.disableAgent") : t("settings.enableAgent")}
-                    >
-                      {togglingTools.has(agent.key) ? (
-                        <Loader2 className="w-3.5 h-3.5 animate-spin text-muted" />
-                      ) : agent.enabled ? (
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-                      ) : (
-                        <Circle className="w-3.5 h-3.5 text-muted" />
-                      )}
-                    </button>
-                  ) : (
-                    <Circle className="w-3.5 h-3.5 text-faint shrink-0" />
-                  )}
-                  <h3 className={cn("text-[13px] font-medium truncate flex-1", agent.installed && agent.enabled ? "text-secondary" : "text-muted")}>
-                    {agent.display_name}
-                  </h3>
-                  {/* Action buttons shown on hover */}
-                  <div className="hidden group-hover:flex items-center gap-0.5 shrink-0">
-                    {agent.has_path_override && !agent.is_custom && (
-                      <button
-                        onClick={() => handleResetPath(agent.key)}
-                        className="p-0.5 text-muted hover:text-amber-500 outline-none"
-                        title={t("settings.resetPath")}
-                      >
-                        <RotateCcw className="w-3 h-3" />
-                      </button>
-                    )}
-                    <button
-                      onClick={() => startEditPath(agent.key, agent.skills_dir)}
-                      className="p-0.5 text-muted hover:text-accent outline-none"
-                      title={t("settings.editPath")}
-                    >
-                      <Pencil className="w-3 h-3" />
-                    </button>
-                    {agent.is_custom && (
-                      <button
-                        onClick={() => handleRemoveCustomAgent(agent.key, agent.display_name)}
-                        className="p-0.5 text-muted hover:text-red-500 outline-none"
-                        title={t("settings.removeCustomAgent")}
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </button>
-                    )}
-                  </div>
-                </div>
+          <div className="space-y-4">
+            <div>
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <h3 className="text-[13px] font-medium text-secondary">{t("settings.builtInAgents")}</h3>
+                <span className="text-[12px] text-muted">{mainstreamTools.length}</span>
+              </div>
+              <AgentGroupDnd
+                items={mainstreamTools}
+                sensors={dragSensors}
+                dragLabel={t("settings.dragToReorder")}
+                onDragEnd={handleAgentDragEnd}
+                renderAgentCard={renderAgentCard}
+              />
+            </div>
 
-                {/* Inline path editing */}
-                {editingPathKey === agent.key ? (
-                  <div className="flex items-center gap-1 mt-0.5">
-                    <input
-                      type="text"
-                      value={editingPathValue}
-                      onChange={(e) => setEditingPathValue(e.target.value)}
-                      className="h-6 flex-1 rounded border border-border-subtle bg-background px-1.5 text-[12px] font-mono text-secondary outline-none focus:border-accent min-w-0"
-                      autoFocus
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") handleSavePath();
-                        if (e.key === "Escape") setEditingPathKey(null);
-                      }}
-                    />
-                    <button
-                      onClick={() => handleBrowsePath(setEditingPathValue)}
-                      className="p-0.5 text-muted hover:text-accent outline-none shrink-0"
-                      title={t("settings.selectFolder")}
-                    >
-                      <FolderOpen className="w-3 h-3" />
-                    </button>
-                    <button onClick={handleSavePath} className="p-0.5 text-emerald-500 hover:text-emerald-400 outline-none shrink-0">
-                      <Check className="w-3 h-3" />
-                    </button>
-                    <button onClick={() => setEditingPathKey(null)} className="p-0.5 text-muted hover:text-secondary outline-none shrink-0">
-                      <X className="w-3 h-3" />
-                    </button>
-                  </div>
-                ) : (
-                  <p className="text-[12px] text-muted truncate" title={agent.skills_dir}>
-                    {agent.is_custom && (
-                      <span className="text-[10px] text-amber-500 font-medium mr-1">{t("settings.customAgent")}</span>
-                    )}
-                    {agent.has_path_override && !agent.is_custom && (
-                      <span className="text-[10px] text-amber-500 font-medium mr-1">{t("settings.pathOverridden")}</span>
-                    )}
-                    {agent.installed
-                      ? agent.skills_dir.replace(/\/Users\/[^/]+/, "~").replace(/\/home\/[^/]+/, "~").replace(/^[A-Za-z]:\\Users\\[^\\]+/, "~")
-                      : t("settings.notInstalled")}
-                  </p>
+            {secondaryTools.length > 0 && (
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setShowMoreAgents((value) => !value)}
+                  className="mb-2 inline-flex items-center gap-1.5 text-[13px] font-medium text-muted transition-colors hover:text-secondary outline-none"
+                >
+                  {showMoreAgents ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                  {t("settings.moreAgentsSection", { count: secondaryTools.length })}
+                </button>
+                {showMoreAgents && (
+                  <AgentGroupDnd
+                    items={secondaryTools}
+                    sensors={dragSensors}
+                    dragLabel={t("settings.dragToReorder")}
+                    onDragEnd={handleAgentDragEnd}
+                    renderAgentCard={renderAgentCard}
+                  />
                 )}
               </div>
-            ))}
+            )}
+
+            {customTools.length > 0 && (
+              <div>
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <h3 className="text-[13px] font-medium text-secondary">{t("settings.customAgentsSection")}</h3>
+                  <span className="text-[12px] text-muted">{customTools.length}</span>
+                </div>
+                <AgentGroupDnd
+                  items={customTools}
+                  sensors={dragSensors}
+                  dragLabel={t("settings.dragToReorder")}
+                  onDragEnd={handleAgentDragEnd}
+                  renderAgentCard={renderAgentCard}
+                />
+              </div>
+            )}
           </div>
         </section>
 
@@ -610,10 +1167,87 @@ export function Settings() {
                 <p className="text-[13px] text-muted">{t("settings.repoPathDesc")}</p>
               </div>
               <div className="flex max-w-full flex-wrap items-center gap-2">
-                <div className="flex min-w-0 items-center gap-1.5 rounded-[4px] border border-border-subtle bg-background px-2 py-1">
-                  <Folder className="w-3 h-3 text-muted" />
-                  <span className="truncate text-[13px] font-mono text-tertiary">{displayedRepoPath}</span>
-                </div>
+                {editingCentralRepoPath ? (
+                  <div className="flex min-w-[320px] max-w-full items-center gap-1">
+                    <input
+                      type="text"
+                      value={centralRepoPathInput}
+                      onChange={(e) => setCentralRepoPathInput(e.target.value)}
+                      className="h-8 min-w-0 flex-1 rounded-[4px] border border-border-subtle bg-background px-2.5 text-[13px] font-mono text-secondary outline-none transition-colors focus:border-border"
+                      autoFocus
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") void handleSaveCentralRepoPath();
+                        if (e.key === "Escape") {
+                          setCentralRepoPathInput(centralRepoPathOverride ?? centralRepoPath);
+                          setEditingCentralRepoPath(false);
+                        }
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleBrowsePath(setCentralRepoPathInput)}
+                      disabled={savingCentralRepoPath}
+                      className="inline-flex h-8 items-center gap-1 rounded-[4px] border border-border-subtle px-2.5 text-[13px] font-medium text-muted transition-colors outline-none hover:text-secondary disabled:opacity-60"
+                    >
+                      <FolderOpen className="w-3 h-3" />
+                      {t("settings.selectFolder")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleSaveCentralRepoPath()}
+                      disabled={savingCentralRepoPath}
+                      className="inline-flex h-8 items-center gap-1 rounded-[4px] border border-emerald-500/30 px-2.5 text-[13px] font-medium text-emerald-600 transition-colors outline-none hover:bg-emerald-500/5 disabled:opacity-60"
+                    >
+                      {savingCentralRepoPath ? (
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                      ) : (
+                        <Check className="w-3 h-3" />
+                      )}
+                      {t("common.save")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCentralRepoPathInput(centralRepoPathOverride ?? centralRepoPath);
+                        setEditingCentralRepoPath(false);
+                      }}
+                      disabled={savingCentralRepoPath}
+                      className="inline-flex h-8 items-center gap-1 rounded-[4px] border border-border-subtle px-2.5 text-[13px] font-medium text-muted transition-colors outline-none hover:text-secondary disabled:opacity-60"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex min-w-0 items-center gap-1.5 rounded-[4px] border border-border-subtle bg-background px-2 py-1">
+                    <Folder className="w-3 h-3 text-muted" />
+                    <span className="truncate text-[13px] font-mono text-tertiary">{displayedRepoPath}</span>
+                  </div>
+                )}
+                {!editingCentralRepoPath && (
+                  <button
+                    type="button"
+                    onClick={handleStartEditCentralRepoPath}
+                    className="inline-flex h-8 items-center gap-1 rounded-[4px] border border-border-subtle px-2.5 text-[13px] font-medium text-muted transition-colors outline-none hover:text-secondary"
+                  >
+                    <Pencil className="w-3 h-3" />
+                    {t("settings.changeDir")}
+                  </button>
+                )}
+                {!editingCentralRepoPath && centralRepoPathOverride && (
+                  <button
+                    type="button"
+                    onClick={() => void handleResetCentralRepoPath()}
+                    disabled={savingCentralRepoPath}
+                    className="inline-flex h-8 items-center gap-1 rounded-[4px] border border-border-subtle px-2.5 text-[13px] font-medium text-muted transition-colors outline-none hover:text-secondary disabled:opacity-60"
+                  >
+                    {savingCentralRepoPath ? (
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                    ) : (
+                      <RotateCcw className="w-3 h-3" />
+                    )}
+                    {t("settings.resetPath")}
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={handleOpenRepoInFinder}
@@ -632,6 +1266,11 @@ export function Settings() {
                   )}
                   {t("settings.openInFinder")}
                 </button>
+              </div>
+              <div className="w-full text-[12px] text-muted">
+                {centralRepoPathOverride
+                  ? t("settings.repoPathCustomHint")
+                  : t("settings.repoPathDefaultHint")}
               </div>
             </div>
 
@@ -719,22 +1358,25 @@ export function Settings() {
               </div>
             </div>
 
-            {/* Default scenario */}
+            {/* Default preset */}
             <div className="flex flex-wrap items-start justify-between gap-3 px-4 py-3">
               <div className="min-w-0 flex-1">
-                <h3 className="text-[13px] text-secondary font-medium mb-0.5">{t("settings.defaultScenario")}</h3>
-                <p className="text-[13px] text-muted">{t("settings.defaultScenarioDesc")}</p>
+                <h3 className="text-[13px] text-secondary font-medium mb-0.5">{t("settings.defaultPreset")}</h3>
+                <p className="text-[13px] text-muted">{t("settings.defaultPresetDesc")}</p>
               </div>
-              <select
-                value={defaultScenario}
-                onChange={(e) => handleDefaultScenarioChange(e.target.value)}
-                className={fieldClass}
-              >
-                <option value="">—</option>
-                {scenarios.map((s) => (
-                  <option key={s.id} value={s.id}>{s.name}</option>
-                ))}
-              </select>
+              <div className="relative shrink-0">
+                <select
+                  value={defaultPreset}
+                  onChange={(e) => handleDefaultPresetChange(e.target.value)}
+                  className={selectClass}
+                >
+                  <option value="">—</option>
+                  {presets.map((s) => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
+              </div>
             </div>
 
             {/* Language */}
@@ -744,15 +1386,18 @@ export function Settings() {
               </div>
               <div className="flex max-w-full flex-wrap items-center gap-2">
                 <Globe className="w-3.5 h-3.5 text-muted" />
-                <select
-                  value={i18n.language}
-                  onChange={(e) => handleLanguageChange(e.target.value)}
-                  className={fieldClass}
-                >
-                  <option value="zh">简体中文 (zh-CN)</option>
-                  <option value="zh-TW">繁體中文 (zh-TW)</option>
-                  <option value="en">English (en-US)</option>
-                </select>
+                <div className="relative">
+                  <select
+                    value={i18n.language}
+                    onChange={(e) => handleLanguageChange(e.target.value)}
+                    className={selectClass}
+                  >
+                    <option value="zh">简体中文 (zh-CN)</option>
+                    <option value="zh-TW">繁體中文 (zh-TW)</option>
+                    <option value="en">English (en-US)</option>
+                  </select>
+                  <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
+                </div>
               </div>
             </div>
 
@@ -847,46 +1492,54 @@ export function Settings() {
           </div>
         </section>
 
-        {/* SkillsMP API Key */}
+        {/* Skill auto-update */}
         <section>
           <h2 className="app-section-title mb-3">
-            {t("settings.skillsmpTitle", { defaultValue: "SkillsMP AI Search" })}
+            {t("settings.autoUpdate.title")}
           </h2>
           <div className="app-panel overflow-hidden divide-y divide-border-subtle">
-            <div className="px-4 py-3">
-              <h3 className="text-[13px] text-secondary font-medium mb-0.5">{t("settings.skillsmpApiKey", { defaultValue: "API Key" })}</h3>
-              <p className="text-[13px] text-muted mb-2">
-                {t("settings.skillsmpDesc", { defaultValue: "Enter your SkillsMP API key to enable AI-powered skill search." })}{" "}
-                <button
-                  type="button"
-                  onClick={() => openUrl("https://skillsmp.com/docs/api")}
-                  className="inline-flex items-center gap-0.5 text-accent-light hover:underline"
-                >
-                  {t("settings.skillsmpGetKey", { defaultValue: "Get your API key" })}
-                  <ExternalLink className="h-3 w-3" />
-                </button>
-              </p>
-              <div className="flex flex-wrap items-center gap-2">
-                <input
-                  type="password"
-                  value={skillsmpApiKey}
-                  onChange={(e) => setSkillsmpApiKey(e.target.value)}
-                  placeholder="sk_live_..."
-                  className={`${fieldClass} min-w-0 flex-1 font-mono`}
-                />
-                <button
-                  onClick={handleSaveSkillsmpApiKey}
-                  disabled={skillsmpSaving}
-                  className={`${actionButtonClass} bg-surface-hover hover:bg-surface-active text-tertiary border-border`}
-                >
-                  {skillsmpSaving ? (
-                    <Loader2 className="w-3 h-3 animate-spin" />
-                  ) : (
-                    <Key className="w-3 h-3" />
-                  )}
-                  {t("common.save")}
-                </button>
+            <div className="flex items-center justify-between gap-4 px-4 py-2.5">
+              <div className="min-w-0">
+                <h3 className="text-[13px] text-secondary font-medium">
+                  {t("settings.autoUpdate.intervalLabel")}
+                </h3>
+                <p className="text-[12px] text-muted">
+                  {t("settings.autoUpdate.intervalDesc")}
+                  {autoUpdateLastRun
+                    ? ` · ${t("settings.autoUpdate.lastRun", {
+                        time: new Date(autoUpdateLastRun).toLocaleString(),
+                      })}`
+                    : ""}
+                </p>
               </div>
+              <select
+                value={autoUpdateInterval}
+                onChange={(e) => handleAutoUpdateIntervalChange(e.target.value)}
+                className={`${fieldClass} shrink-0`}
+              >
+                <option value="off">{t("settings.autoUpdate.intervalOff")}</option>
+                <option value="1h">{t("settings.autoUpdate.interval1h")}</option>
+                <option value="6h">{t("settings.autoUpdate.interval6h")}</option>
+                <option value="24h">{t("settings.autoUpdate.interval24h")}</option>
+              </select>
+            </div>
+            <div className="flex items-center justify-between gap-4 px-4 py-2.5">
+              <div className="min-w-0">
+                <h3 className="text-[13px] text-secondary font-medium">
+                  {t("settings.autoUpdate.applyLabel")}
+                </h3>
+                <p className="text-[12px] text-muted">
+                  {t("settings.autoUpdate.applyDesc")}
+                </p>
+              </div>
+              <select
+                value={autoUpdateApply}
+                onChange={(e) => handleAutoUpdateApplyChange(e.target.value)}
+                className={`${fieldClass} shrink-0`}
+              >
+                <option value="off">{t("settings.autoUpdate.applyOff")}</option>
+                <option value="on">{t("settings.autoUpdate.applyOn")}</option>
+              </select>
             </div>
           </div>
         </section>
@@ -926,14 +1579,44 @@ export function Settings() {
         </section>
 
         {/* About */}
-        <section>
+        <section className="space-y-2">
+          {lastPanic && (
+            <div className="app-panel flex flex-wrap items-center justify-between gap-2 p-3 border border-red-500/40 bg-red-500/10">
+              <div className="flex min-w-0 items-center gap-2 text-[13px] text-red-700 dark:text-red-300">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <span>{t("settings.panicBanner", { time: lastPanic.timestamp })}</span>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={handleReportIssue}
+                  disabled={reportingIssue}
+                  className={`${actionButtonClass} bg-red-600 hover:bg-red-700 text-white border-red-600`}
+                >
+                  {reportingIssue ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <Bug className="w-3 h-3" />
+                  )}
+                  {t("settings.reportIssue")}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDismissPanic}
+                  className={`${actionButtonClass} bg-surface-hover hover:bg-surface-active text-tertiary border-border`}
+                >
+                  {t("settings.panicDismiss")}
+                </button>
+              </div>
+            </div>
+          )}
           <div className="app-panel flex flex-wrap items-start justify-between gap-3 p-4">
             <div className="flex min-w-0 flex-1 items-center gap-3">
               <div className="w-8 h-8 rounded-lg bg-surface-hover border border-border flex items-center justify-center">
                 <Settings2 className="w-4 h-4 text-accent" />
               </div>
               <div>
-                <h3 className="text-[13px] font-semibold text-primary">{t("settings.version")}</h3>
+                <h3 className="text-[13px] font-semibold text-primary">{t("settings.version")}{appVersion ? ` v${appVersion}` : ""}</h3>
                 <p className="text-muted text-[13px]">
                   {t("settings.tagline")}
                   {updateInfo?.has_update && (
@@ -1002,16 +1685,49 @@ export function Settings() {
               </button>
               <button
                 type="button"
-                onClick={handleOpenGithub}
-                disabled={openingGithub}
+                onClick={handleReportIssue}
+                disabled={reportingIssue}
+                title={t("settings.reportIssueHint")}
                 className={`${actionButtonClass} bg-surface-hover hover:bg-surface-active text-tertiary border-border`}
               >
-                <Github className="w-3 h-3" /> GitHub
+                {reportingIssue ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : (
+                  <Bug className="w-3 h-3" />
+                )}
+                {t("settings.reportIssue")}
+              </button>
+              <button
+                type="button"
+                onClick={() => setFeedbackOpen(true)}
+                className={`${actionButtonClass} bg-surface-hover hover:bg-surface-active text-tertiary border-border`}
+              >
+                <MessageSquarePlus className="w-3 h-3" />
+                {t("feedback.title")}
+              </button>
+              <button
+                type="button"
+                onClick={handleExportLogs}
+                disabled={exportingLogs}
+                title={t("settings.exportLogsHint")}
+                className={`${actionButtonClass} bg-surface-hover hover:bg-surface-active text-tertiary border-border`}
+              >
+                {exportingLogs ? (
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                ) : (
+                  <FileArchive className="w-3 h-3" />
+                )}
+                {t("settings.exportLogs")}
               </button>
             </div>
           </div>
         </section>
       </div>
+      <FeedbackDialog
+        open={feedbackOpen}
+        defaultType="工具问题"
+        onClose={() => setFeedbackOpen(false)}
+      />
     </div>
   );
 }

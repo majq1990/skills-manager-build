@@ -1,9 +1,50 @@
-use crate::core::{central_repo, error::AppError, git_backup, git_fetcher, skill_metadata};
+use crate::core::{
+    central_repo, error::AppError, git_backup, git_fetcher, skill_metadata, sync_metadata,
+};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::State;
 use walkdir::WalkDir;
 
 use crate::core::skill_store::SkillStore;
+
+static FETCH_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
+
+/// RAII guard that clears `FETCH_IN_FLIGHT` on drop. Survives future
+/// cancellation, panic in the blocking task, and early returns — without
+/// it, a dropped command future would strand the flag set forever.
+struct FetchInFlightGuard;
+
+impl FetchInFlightGuard {
+    fn try_acquire() -> Option<Self> {
+        FETCH_IN_FLIGHT
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .ok()
+            .map(|_| FetchInFlightGuard)
+    }
+}
+
+impl Drop for FetchInFlightGuard {
+    fn drop(&mut self) {
+        FETCH_IN_FLIGHT.store(false, Ordering::Release);
+    }
+}
+
+#[tauri::command]
+pub async fn git_backup_fetch(store: State<'_, Arc<SkillStore>>) -> Result<(), AppError> {
+    let _ = store;
+    // Coalesce concurrent fetches: a `git fetch` against the central repo
+    // already in flight makes any duplicate request redundant, and stacking
+    // them up holds open ssh connections to GitHub.
+    let Some(_guard) = FetchInFlightGuard::try_acquire() else {
+        return Ok(());
+    };
+    let skills_dir = central_repo::skills_dir();
+    tokio::task::spawn_blocking(move || {
+        git_backup::fetch_remote(&skills_dir).map_err(AppError::git)
+    })
+    .await?
+}
 
 #[tauri::command]
 pub async fn git_backup_status(
@@ -17,10 +58,16 @@ pub async fn git_backup_status(
 
 #[tauri::command]
 pub async fn git_backup_init(store: State<'_, Arc<SkillStore>>) -> Result<(), AppError> {
-    let _ = store;
+    let store = store.inner().clone();
     let skills_dir = central_repo::skills_dir();
-    tokio::task::spawn_blocking(move || git_backup::init_repo(&skills_dir).map_err(AppError::git))
-        .await?
+    tokio::task::spawn_blocking(move || {
+        git_backup::with_repo_lock("git init", || {
+            sync_metadata::write_all_from_db_unlocked(&store)?;
+            git_backup::init_repo_unlocked(&skills_dir)
+        })
+        .map_err(AppError::git)
+    })
+    .await?
 }
 
 #[tauri::command]
@@ -32,7 +79,7 @@ pub async fn git_backup_set_remote(
     git_fetcher::validate_git_url(&url).map_err(AppError::git)?;
     let skills_dir = central_repo::skills_dir();
     tokio::task::spawn_blocking(move || {
-        git_backup::set_remote(&skills_dir, &url).map_err(AppError::git)
+        git_backup::set_remote(&skills_dir, &url).map_err(AppError::classify_git_error)
     })
     .await?
 }
@@ -42,10 +89,14 @@ pub async fn git_backup_commit(
     store: State<'_, Arc<SkillStore>>,
     message: String,
 ) -> Result<(), AppError> {
-    let _ = store;
+    let store = store.inner().clone();
     let skills_dir = central_repo::skills_dir();
     tokio::task::spawn_blocking(move || {
-        git_backup::commit_all(&skills_dir, &message).map_err(AppError::git)
+        git_backup::with_repo_lock("git commit", || {
+            sync_metadata::write_all_from_db_unlocked(&store)?;
+            git_backup::commit_all_unlocked(&skills_dir, &message)
+        })
+        .map_err(AppError::git)
     })
     .await?
 }
@@ -54,8 +105,10 @@ pub async fn git_backup_commit(
 pub async fn git_backup_push(store: State<'_, Arc<SkillStore>>) -> Result<(), AppError> {
     let _ = store;
     let skills_dir = central_repo::skills_dir();
-    tokio::task::spawn_blocking(move || git_backup::push(&skills_dir).map_err(AppError::git))
-        .await?
+    tokio::task::spawn_blocking(move || {
+        git_backup::push(&skills_dir).map_err(AppError::classify_git_error)
+    })
+    .await?
 }
 
 #[tauri::command]
@@ -63,8 +116,11 @@ pub async fn git_backup_pull(store: State<'_, Arc<SkillStore>>) -> Result<(), Ap
     let store = store.inner().clone();
     let skills_dir = central_repo::skills_dir();
     tokio::task::spawn_blocking(move || {
-        git_backup::pull(&skills_dir).map_err(AppError::git)?;
-        reconcile_skills_index(&store).map_err(AppError::db)
+        git_backup::with_repo_lock("git pull", || {
+            git_backup::pull_unlocked(&skills_dir)?;
+            reconcile_skills_index_unlocked(&store)
+        })
+        .map_err(AppError::classify_git_error)
     })
     .await?
 }
@@ -78,8 +134,32 @@ pub async fn git_backup_clone(
     let store = store.inner().clone();
     let skills_dir = central_repo::skills_dir();
     tokio::task::spawn_blocking(move || {
-        git_backup::clone_into(&skills_dir, &url).map_err(AppError::git)?;
-        reconcile_skills_index(&store).map_err(AppError::db)
+        git_backup::with_repo_lock("git clone", || {
+            git_backup::clone_into_unlocked(&skills_dir, &url)?;
+            reconcile_skills_index_unlocked(&store)
+        })
+        .map_err(AppError::classify_git_error)
+    })
+    .await?
+}
+
+/// Recovery: discard the local `.git` and re-clone from the configured remote.
+/// Existing skill files are preserved via the same backup-then-merge flow
+/// used by the regular clone path.
+#[tauri::command]
+pub async fn git_backup_reclone(
+    store: State<'_, Arc<SkillStore>>,
+    url: String,
+) -> Result<(), AppError> {
+    git_fetcher::validate_git_url(&url).map_err(AppError::git)?;
+    let store = store.inner().clone();
+    let skills_dir = central_repo::skills_dir();
+    tokio::task::spawn_blocking(move || {
+        git_backup::with_repo_lock("git reclone", || {
+            git_backup::reclone_from_remote_unlocked(&skills_dir, &url)?;
+            reconcile_skills_index_unlocked(&store)
+        })
+        .map_err(AppError::classify_git_error)
     })
     .await?
 }
@@ -118,14 +198,23 @@ pub async fn git_backup_restore_version(
     let store = store.inner().clone();
     let skills_dir = central_repo::skills_dir();
     tokio::task::spawn_blocking(move || {
-        git_backup::restore_snapshot_version(&skills_dir, &tag).map_err(AppError::git)?;
-        reconcile_skills_index(&store).map_err(AppError::db)?;
+        git_backup::with_repo_lock("git restore snapshot", || {
+            git_backup::restore_snapshot_version_unlocked(&skills_dir, &tag)?;
+            reconcile_skills_index_unlocked(&store)
+        })
+        .map_err(AppError::git)?;
         Ok(())
     })
     .await?
 }
 
-fn reconcile_skills_index(store: &SkillStore) -> anyhow::Result<()> {
+fn reconcile_skills_index_unlocked(store: &SkillStore) -> anyhow::Result<()> {
+    sync_metadata::cleanup_temporary_files()?;
+    if sync_metadata::has_complete_skill_snapshot() {
+        sync_metadata::reindex_from_metadata_unlocked(store)?;
+        return Ok(());
+    }
+
     let skills_dir = central_repo::skills_dir();
     std::fs::create_dir_all(&skills_dir)?;
 
@@ -191,5 +280,5 @@ fn reconcile_skills_index(store: &SkillStore) -> anyhow::Result<()> {
         store.insert_skill(&record)?;
     }
 
-    Ok(())
+    sync_metadata::write_all_from_db_unlocked(store)
 }

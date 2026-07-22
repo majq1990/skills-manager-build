@@ -428,8 +428,8 @@ pub async fn install_skillhub_skill(
     skill_id: String,
     store: State<'_, Arc<SkillStore>>,
 ) -> Result<String, AppError> {
-    use crate::commands::scenarios::sync_scenario_skills;
-    use crate::commands::skills::{store_installed_skill, InstallSourceMetadata};
+    use crate::commands::presets::sync_scenario_skills;
+    use crate::commands::skills::{store_installed_skill_unlocked, InstallSourceMetadata};
     use crate::core::installer;
 
     let store = store.inner().clone();
@@ -466,7 +466,7 @@ pub async fn install_skillhub_skill(
         };
 
         let active = store.get_active_scenario_id().ok().flatten();
-        store_installed_skill(&store, &result, &metadata, active.as_deref())?;
+        store_installed_skill_unlocked(&store, &result, &metadata, active.as_deref())?;
 
         if let Some(scenario_id) = active.as_deref() {
             sync_scenario_skills(&store, scenario_id)?;

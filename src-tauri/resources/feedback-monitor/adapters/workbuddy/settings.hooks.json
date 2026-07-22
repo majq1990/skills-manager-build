@@ -1,0 +1,17 @@
+{
+  "_comment": "合并进 ~/.workbuddy/settings.json（或项目 .codebuddy/settings.json）的 hooks 段。CC-兼容格式。${FEEDBACK_DIR} 由 skills-manager 装机时替换为 feedback-monitor 安装绝对路径。Windows 下 command 走 Git Bash。",
+  "hooks": {
+    "PostToolUse": [
+      { "matcher": "*", "hooks": [ { "type": "command", "timeout": 15, "command": "node \"${FEEDBACK_DIR}/adapters/workbuddy/ingest.mjs\"" } ] }
+    ],
+    "PostToolUseFailure": [
+      { "matcher": "*", "hooks": [ { "type": "command", "timeout": 15, "command": "node \"${FEEDBACK_DIR}/adapters/workbuddy/ingest.mjs\"" } ] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "command", "timeout": 15, "command": "node \"${FEEDBACK_DIR}/adapters/workbuddy/ingest.mjs\"" } ] }
+    ],
+    "Stop": [
+      { "hooks": [ { "type": "command", "timeout": 10, "command": "node \"${FEEDBACK_DIR}/adapters/workbuddy/ingest.mjs\"" } ] }
+    ]
+  }
+}

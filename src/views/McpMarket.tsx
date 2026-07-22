@@ -469,9 +469,8 @@ function DomesticMcpCard({
       {/* Meta */}
       <div className="flex items-center gap-2 text-[12px] text-muted">
         <span className="rounded bg-surface-hover px-1.5 py-0.5 font-mono text-[11px] text-secondary">
-          {server.category}
+          {server.provider}
         </span>
-        <span>{server.installs.toLocaleString()} {isGitee ? "stars" : "installs"}</span>
       </div>
 
       {/* Action */}
@@ -535,7 +534,7 @@ function RegistryMcpCard({
           {server.name}
         </h3>
         <span className="shrink-0 rounded-full bg-blue-500/12 px-2 py-0.5 text-[11px] font-medium text-blue-600 dark:text-blue-400">
-          v{server.version}
+          MCP
         </span>
       </div>
 

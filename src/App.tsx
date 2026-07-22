@@ -2,17 +2,19 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { Toaster } from "sonner";
 import { AppProvider } from "./context/AppContext";
 import { ThemeProvider, useThemeContext } from "./context/ThemeContext";
-import { AuthProvider } from "./context/AuthContext";
-import { SkillMarket } from "./views/SkillMarket";
-import { McpMarket } from "./views/McpMarket";
 import { HelpDialog } from "./components/HelpDialog";
 import { CloseActionGuard } from "./components/CloseActionGuard";
 import { Layout } from "./components/Layout";
 import { Dashboard } from "./views/Dashboard";
 import { MySkills } from "./views/MySkills";
+import { WorkspaceView } from "./views/WorkspaceView";
+import { CODING_WORKSPACE_CONFIG, LOBSTER_WORKSPACE_CONFIG } from "./views/workspaceConfigs";
 import { InstallSkills } from "./views/InstallSkills";
 import { Settings } from "./views/Settings";
 import { ProjectDetail } from "./views/ProjectDetail";
+import { EnterpriseMarket } from "./views/EnterpriseMarket";
+import { McpMarket } from "./views/McpMarket";
+import { Memory } from "./views/Memory";
 
 function ThemedToaster() {
   const { resolvedTheme } = useThemeContext();
@@ -35,23 +37,26 @@ function App() {
   return (
     <ThemeProvider>
       <AppProvider>
-        <AuthProvider>
-          <BrowserRouter>
-            <Routes>
-              <Route element={<Layout />}>
-                <Route path="/" element={<Dashboard />} />
-                <Route path="/my-skills" element={<MySkills />} />
-                <Route path="/install" element={<InstallSkills />} />
-                <Route path="/project/:id" element={<ProjectDetail />} />
-                <Route path="/settings" element={<Settings />} />
-                <Route path="/market" element={<SkillMarket />} />
-                <Route path="/mcp-market" element={<McpMarket />} />
-              </Route>
-            </Routes>
-            <HelpDialog />
-            <CloseActionGuard />
-          </BrowserRouter>
-        </AuthProvider>
+        <BrowserRouter>
+          <Routes>
+            <Route element={<Layout />}>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/my-skills" element={<MySkills />} />
+              <Route path="/global-workspace" element={<WorkspaceView config={CODING_WORKSPACE_CONFIG} />} />
+              <Route path="/global-workspace/:agentKey" element={<WorkspaceView config={CODING_WORKSPACE_CONFIG} />} />
+              <Route path="/lobster-workspace" element={<WorkspaceView config={LOBSTER_WORKSPACE_CONFIG} />} />
+              <Route path="/lobster-workspace/:agentKey" element={<WorkspaceView config={LOBSTER_WORKSPACE_CONFIG} />} />
+              <Route path="/install" element={<InstallSkills />} />
+              <Route path="/enterprise" element={<EnterpriseMarket />} />
+              <Route path="/mcp-market" element={<McpMarket />} />
+              <Route path="/memory" element={<Memory />} />
+              <Route path="/project/:id" element={<ProjectDetail />} />
+              <Route path="/settings" element={<Settings />} />
+            </Route>
+          </Routes>
+          <HelpDialog />
+          <CloseActionGuard />
+        </BrowserRouter>
         <ThemedToaster />
       </AppProvider>
     </ThemeProvider>

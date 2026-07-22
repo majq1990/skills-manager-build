@@ -1,18 +1,6 @@
-# Codemagic 配置：macOS Tauri 打包，产物上传到 codemagic cloud（不直接 scp 到 demo）
-#
-# 经验教训：codemagic mac (海外) → demo (国内) scp 速度 ~30 KB/s，6 个文件 80MB
-# 跑 54min 都没传完，撞 max_build_duration 60min 被 kill。改方案：
-#   - mac 上只 cargo build + bundle
-#   - artifacts 通过 codemagic 内置机制上传到 codemagic cloud
-#   - 用户从 codemagic UI 下载到本地，本地（带代理）scp 到 demo
-#
-# 配置：
-#   1) codemagic.io 连接 GitHub 仓库 majq1990/skills-manager-build
-#   2) Teams > Personal > Environment variables，group 'demo_release' 勾选 Secure：
-#        - TAURI_SIGNING_PRIVATE_KEY
-#        - TAURI_SIGNING_PRIVATE_KEY_PASSWORD
-#   3) 触发：tag v* 自动；或 UI 手动 Start build
-
+# macOS builds run on Codemagic when a v* tag is pushed. Artifacts stay in
+# Codemagic Cloud; uploading them to demo is handled from the local release host
+# because direct Codemagic-to-demo transfer is too slow.
 workflows:
   macos-build:
     name: skills-manager macOS build
@@ -23,10 +11,6 @@ workflows:
       vars:
         BUNDLE_TARGETS: "app,dmg"
       groups:
-        # 在 Codemagic UI > Teams > Personal > Environment variables 创建 group 'demo_release'
-        # 仅需 2 个变量（DEMO_SSH_KEY 等已不需要，scp 改在本地跑）：
-        #   TAURI_SIGNING_PRIVATE_KEY (Secure)
-        #   TAURI_SIGNING_PRIVATE_KEY_PASSWORD (Secure)
         - demo_release
     triggering:
       events:
@@ -42,7 +26,7 @@ workflows:
           node -v
           npm -v
 
-      - name: Install Rust + targets
+      - name: Install Rust and targets
         script: |
           set -euxo pipefail
           curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
@@ -50,7 +34,7 @@ workflows:
           rustup target add aarch64-apple-darwin x86_64-apple-darwin
           rustc --version
 
-      - name: Install npm deps
+      - name: Install npm dependencies
         script: |
           set -euxo pipefail
           npm ci
@@ -74,33 +58,13 @@ workflows:
           set -euxo pipefail
           mkdir -p out
           VERSION=$(node -p "require('./package.json').version")
-
-          # arm64 dmg + updater
-          cp src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg \
-             "out/skills-manager_${VERSION}_aarch64.dmg"
-          cp src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz \
-             "out/skills-manager_${VERSION}_aarch64.app.tar.gz"
-          cp src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz.sig \
-             "out/skills-manager_${VERSION}_aarch64.app.tar.gz.sig"
-
-          # x86_64 dmg + updater
-          cp src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg \
-             "out/skills-manager_${VERSION}_x86_64.dmg"
-          cp src-tauri/target/x86_64-apple-darwin/release/bundle/macos/*.app.tar.gz \
-             "out/skills-manager_${VERSION}_x86_64.app.tar.gz"
-          cp src-tauri/target/x86_64-apple-darwin/release/bundle/macos/*.app.tar.gz.sig \
-             "out/skills-manager_${VERSION}_x86_64.app.tar.gz.sig"
-
+          cp src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg "out/skills-manager_${VERSION}_aarch64.dmg"
+          cp src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz "out/skills-manager_${VERSION}_aarch64.app.tar.gz"
+          cp src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app.tar.gz.sig "out/skills-manager_${VERSION}_aarch64.app.tar.gz.sig"
+          cp src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg "out/skills-manager_${VERSION}_x86_64.dmg"
+          cp src-tauri/target/x86_64-apple-darwin/release/bundle/macos/*.app.tar.gz "out/skills-manager_${VERSION}_x86_64.app.tar.gz"
+          cp src-tauri/target/x86_64-apple-darwin/release/bundle/macos/*.app.tar.gz.sig "out/skills-manager_${VERSION}_x86_64.app.tar.gz.sig"
           ls -la out/
-
-      # 不再在 mac 上 scp 到 demo —— 跨境带宽太差，54min 都没传完一文件。
-      # 走 codemagic 内置 artifacts 上传（去 codemagic cloud），用户本地下载后
-      # 通过本地代理 scp 到 demo（比 mac 直传 demo 快 100 倍）。
-      - name: List artifacts
-        script: |
-          set -eux
-          ls -la out/
-          du -sh out/*
 
     artifacts:
       - out/*.dmg

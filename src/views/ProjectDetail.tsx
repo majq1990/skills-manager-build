@@ -16,19 +16,71 @@ import {
   Trash2,
   SquareCheck,
   Square,
+  Plus,
+  CircleSlash,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import { useApp } from "../context/AppContext";
 import { useMultiSelect } from "../hooks/useMultiSelect";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { MultiSelectToolbar } from "../components/MultiSelectToolbar";
+import { BatchTagDialog } from "../components/BatchTagDialog";
+import { DetailSheet } from "../components/DetailSheet";
+import { AgentToggleSection, type AgentToggleItem } from "../components/AgentToggleSection";
+import { ProjectAgentDots } from "../components/ProjectAgentDots";
+import { PresetBar } from "../components/PresetBar";
 import { SkillMarkdown } from "../components/SkillMarkdown";
+import { DocumentDiffViewer } from "../components/DocumentDiffViewer";
+import { getTagActiveColor, getTagColor, UNTAGGED_FILTER } from "../lib/skillTags";
 import { cn } from "../utils";
 import * as api from "../lib/tauri";
-import type { ProjectSkill, ManagedSkill } from "../lib/tauri";
+import type { ProjectSkill, ManagedSkill, ProjectAgentTarget } from "../lib/tauri";
 import { getErrorMessage } from "../lib/error";
+import { AddSkillsSheet } from "../components/AddSkillsSheet";
+
+const PROJECT_DEFAULT_EXPORT_AGENTS_KEY = "project_default_export_agents";
+const PROJECT_EXPORT_AGENT_PRIORITY = ["claude_code", "codex", "cursor", "gemini_cli", "github_copilot"];
+
+const projectLastUsedAgentsKey = (projectId: string) =>
+  `project_last_used_export_agents:${projectId}`;
+
+interface ProjectSkillGroup {
+  id: string;
+  name: string;
+  dir_name: string;
+  relative_path: string;
+  description: string | null;
+  files: string[];
+  variants: ProjectSkill[];
+  enabledCount: number;
+  totalCount: number;
+  primaryVariant: ProjectSkill;
+  status: ProjectSkill["sync_status"];
+  tags: string[];
+  centerSkillIds: string[];
+}
+
+function getDefaultExportAgents(targets: ProjectAgentTarget[], savedValue?: string | null) {
+  const availableKeys = new Set(targets.map((target) => target.key));
+  if (savedValue) {
+    try {
+      const parsed = JSON.parse(savedValue);
+      if (Array.isArray(parsed)) {
+        const filtered = parsed.filter((item): item is string => typeof item === "string" && availableKeys.has(item));
+        if (filtered.length > 0) {
+          return Array.from(new Set(filtered));
+        }
+      }
+    } catch {
+      // Ignore invalid persisted settings and fall back to built-in defaults.
+    }
+  }
+
+  const prioritized = PROJECT_EXPORT_AGENT_PRIORITY.filter((key) => availableKeys.has(key));
+  const fallback = targets.map((target) => target.key);
+  return Array.from(new Set((prioritized.length > 0 ? prioritized : fallback).slice(0, 3)));
+}
 
 function getSyncStatusMeta(t: (key: string) => string, status: ProjectSkill["sync_status"]) {
   switch (status) {
@@ -60,27 +112,87 @@ function getSyncStatusMeta(t: (key: string) => string, status: ProjectSkill["syn
   }
 }
 
+function getAssignedAgents(variants: ProjectSkill[]) {
+  return Array.from(new Set(variants.map((variant) => variant.agent))).sort();
+}
+
+function getAgentDotTargets(variants: ProjectSkill[]) {
+  const seen = new Set<string>();
+  const targets: { key: string; display_name: string }[] = [];
+  for (const v of variants) {
+    if (!seen.has(v.agent)) {
+      seen.add(v.agent);
+      targets.push({ key: v.agent, display_name: v.agent_display_name });
+    }
+  }
+  return targets;
+}
+
+function getGroupStatus(variants: ProjectSkill[]): ProjectSkill["sync_status"] {
+  const priority: ProjectSkill["sync_status"][] = [
+    "diverged",
+    "project_newer",
+    "center_newer",
+    "project_only",
+    "in_sync",
+  ];
+  for (const status of priority) {
+    if (variants.some((variant) => variant.sync_status === status)) {
+      return status;
+    }
+  }
+  return "project_only";
+}
+
 export function ProjectDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { t } = useTranslation();
-  const { projects, managedSkills, refreshManagedSkills, refreshScenarios } = useApp();
+  const { projects, presets, managedSkills, refreshManagedSkills, refreshPresets, refreshProjects } = useApp();
   const [skills, setSkills] = useState<ProjectSkill[]>([]);
+  const [projectAgentTargets, setProjectAgentTargets] = useState<ProjectAgentTarget[]>([]);
+  const [selectedExportAgents, setSelectedExportAgents] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [filterMode, setFilterMode] = useState<"all" | "enabled" | "disabled">("all");
   const [search, setSearch] = useState("");
-  const [detailSkill, setDetailSkill] = useState<ProjectSkill | null>(null);
+  const [tagFilters, setTagFilters] = useState<Set<string>>(new Set());
+  const [detailSkill, setDetailSkill] = useState<ProjectSkillGroup | null>(null);
   const [docContent, setDocContent] = useState<string | null>(null);
   const [docLoading, setDocLoading] = useState(false);
+  const [centerDocContent, setCenterDocContent] = useState<string | null>(null);
+  const [centerDocLoading, setCenterDocLoading] = useState(false);
   const [updatingCenterSkill, setUpdatingCenterSkill] = useState<string | null>(null);
   const [updatingProjectSkill, setUpdatingProjectSkill] = useState<string | null>(null);
+  const [batchUpdatingCenter, setBatchUpdatingCenter] = useState(false);
+  const [batchUpdatingProject, setBatchUpdatingProject] = useState(false);
   const [togglingSkill, setTogglingSkill] = useState<string | null>(null);
+  const [togglingAgentTarget, setTogglingAgentTarget] = useState<{ skillKey: string; agent: string } | null>(null);
   const [showExportDialog, setShowExportDialog] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<ProjectSkill | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ProjectSkillGroup | null>(null);
   const [batchDeleteConfirm, setBatchDeleteConfirm] = useState(false);
+  const [batchTagDialogOpen, setBatchTagDialogOpen] = useState(false);
+  const PROJECT_ADD_CALLOUT_KEY = "skills-manager.projectAddCalloutDismissed";
+  const [showAddCallout, setShowAddCallout] = useState(() => {
+    try {
+      return localStorage.getItem(PROJECT_ADD_CALLOUT_KEY) !== "1";
+    } catch {
+      return false;
+    }
+  });
+  const dismissAddCallout = () => {
+    setShowAddCallout(false);
+    try {
+      localStorage.setItem(PROJECT_ADD_CALLOUT_KEY, "1");
+    } catch {
+      // ignore
+    }
+  };
 
   const project = projects.find((p) => p.id === id);
+  const getSkillKey = useCallback((skill: Pick<ProjectSkillGroup, "id">) => {
+    return skill.id;
+  }, []);
 
   const loadSkills = useCallback(async () => {
     if (!id) return;
@@ -100,22 +212,106 @@ export function ProjectDetail() {
   }, [loadSkills]);
 
   useEffect(() => {
+    let cancelled = false;
+    const loadProjectAgentTargets = async () => {
+      if (!id) return;
+      try {
+        const result = await api.getProjectAgentTargets(id);
+        if (!cancelled) {
+          setProjectAgentTargets(result);
+        }
+      } catch (e) {
+        console.error("Failed to load project agent targets:", e);
+      }
+    };
+    loadProjectAgentTargets();
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  useEffect(() => {
     if (!project && !loading) {
       navigate("/");
     }
   }, [project, loading, navigate]);
 
+  const groupedSkills = useMemo<ProjectSkillGroup[]>(() => {
+    const groups = new Map<string, ProjectSkillGroup>();
+    for (const skill of skills) {
+      const key = skill.relative_path.toLowerCase();
+      const existing = groups.get(key);
+      if (existing) {
+        existing.variants.push(skill);
+        existing.enabledCount += skill.enabled ? 1 : 0;
+        existing.totalCount += 1;
+        existing.files = Array.from(new Set([...existing.files, ...skill.files])).sort();
+        existing.tags = Array.from(new Set([...existing.tags, ...skill.tags])).sort((a, b) => a.localeCompare(b));
+        if (skill.center_skill_id && !existing.centerSkillIds.includes(skill.center_skill_id)) {
+          existing.centerSkillIds.push(skill.center_skill_id);
+          existing.centerSkillIds.sort((a, b) => a.localeCompare(b));
+        }
+        if (!existing.description && skill.description) {
+          existing.description = skill.description;
+        }
+        continue;
+      }
+      groups.set(key, {
+        id: key,
+        name: skill.name,
+        dir_name: skill.dir_name,
+        relative_path: skill.relative_path,
+        description: skill.description,
+        files: [...skill.files],
+        variants: [skill],
+        enabledCount: skill.enabled ? 1 : 0,
+        totalCount: 1,
+        primaryVariant: skill,
+        status: skill.sync_status,
+        tags: [...skill.tags].sort((a, b) => a.localeCompare(b)),
+        centerSkillIds: skill.center_skill_id ? [skill.center_skill_id] : [],
+      });
+    }
+    return Array.from(groups.values())
+      .map((group) => ({
+        ...group,
+        variants: [...group.variants].sort((a, b) => a.agent_display_name.localeCompare(b.agent_display_name)),
+        primaryVariant: [...group.variants].sort((a, b) => a.agent_display_name.localeCompare(b.agent_display_name))[0],
+        status: getGroupStatus(group.variants),
+      }))
+      .sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+  }, [skills]);
+
+  useEffect(() => {
+    if (!detailSkill) return;
+    const refreshed = groupedSkills.find((skill) => skill.id === detailSkill.id) ?? null;
+    if (!refreshed) {
+      setDetailSkill(null);
+      setDocContent(null);
+      return;
+    }
+    if (refreshed !== detailSkill) {
+      setDetailSkill(refreshed);
+    }
+  }, [detailSkill, groupedSkills]);
+
   const filtered = useMemo(() => {
-    return skills.filter((skill) => {
+    return groupedSkills.filter((skill) => {
       const matchesSearch =
         skill.name.toLowerCase().includes(search.toLowerCase()) ||
         (skill.description || "").toLowerCase().includes(search.toLowerCase());
       if (!matchesSearch) return false;
-      if (filterMode === "enabled") return skill.enabled;
-      if (filterMode === "disabled") return !skill.enabled;
+      if (tagFilters.size > 0) {
+        const wantUntagged = tagFilters.has(UNTAGGED_FILTER);
+        const matchUntagged = wantUntagged && skill.tags.length === 0;
+        const matchTag = skill.tags.some((tag) => tagFilters.has(tag));
+        if (!matchUntagged && !matchTag) return false;
+      }
+      if (filterMode === "enabled") return skill.enabledCount > 0;
+      if (filterMode === "disabled") return skill.enabledCount === 0;
       return true;
     });
-  }, [skills, search, filterMode]);
+  }, [groupedSkills, search, filterMode, tagFilters]);
 
   const {
     isMultiSelect, setIsMultiSelect,
@@ -126,21 +322,180 @@ export function ProjectDetail() {
     handleSelectAll,
     exitMultiSelect,
   } = useMultiSelect({
-    items: skills,
+    items: groupedSkills,
     filtered,
-    getKey: (s) => s.dir_name,
-    isItemActive: (s) => s.enabled,
+    getKey: getSkillKey,
+    isItemActive: (s) => s.enabledCount === s.totalCount,
   });
 
-  const enabledCount = skills.filter((s) => s.enabled).length;
+  const exportTargets = useMemo(() => {
+    if (projectAgentTargets.length > 0) return projectAgentTargets;
+    return [{ key: "claude_code", display_name: "Claude Code", enabled: true, installed: true, is_custom: false }];
+  }, [projectAgentTargets]);
 
-  const handleOpenDetail = async (skill: ProjectSkill) => {
+  const projectSkillDirNamesByAgent = useMemo(() => {
+    const map: Record<string, string[]> = {};
+    for (const skill of skills) {
+      if (!map[skill.agent]) {
+        map[skill.agent] = [];
+      }
+      map[skill.agent].push(skill.relative_path.toLowerCase());
+    }
+    return map;
+  }, [skills]);
+
+  const projectCenterSkillIdsByAgent = useMemo(() => {
+    const map: Record<string, string[]> = {};
+    for (const skill of skills) {
+      if (!skill.center_skill_id) continue;
+      if (!map[skill.agent]) {
+        map[skill.agent] = [];
+      }
+      map[skill.agent].push(skill.center_skill_id);
+    }
+    return map;
+  }, [skills]);
+
+  const projectPresetVariants = useMemo(() => {
+    const map = new Map<string, ProjectSkill>();
+    for (const skill of skills) {
+      if (!skill.center_skill_id) continue;
+      map.set(`${skill.center_skill_id}::${skill.agent}`, skill);
+    }
+    return map;
+  }, [skills]);
+
+  const findProjectPresetVariant = useCallback(
+    (skill: ManagedSkill, agentKey: string) =>
+      projectPresetVariants.get(`${skill.id}::${agentKey}`) ?? null,
+    [projectPresetVariants]
+  );
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadDefaultExportAgents = async () => {
+      const savedValue = await api.getSettings(PROJECT_DEFAULT_EXPORT_AGENTS_KEY).catch(() => null);
+      if (cancelled) return;
+      setSelectedExportAgents(getDefaultExportAgents(exportTargets, savedValue));
+    };
+    loadDefaultExportAgents();
+    return () => {
+      cancelled = true;
+    };
+  }, [exportTargets]);
+
+  const [lastUsedExportAgents, setLastUsedExportAgents] = useState<string[] | null>(null);
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    api.getSettings(projectLastUsedAgentsKey(id))
+      .then((raw) => {
+        if (cancelled) return;
+        if (!raw) {
+          setLastUsedExportAgents(null);
+          return;
+        }
+        try {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) {
+            setLastUsedExportAgents(parsed.filter((x): x is string => typeof x === "string"));
+            return;
+          }
+        } catch {
+          // fall through
+        }
+        setLastUsedExportAgents(null);
+      })
+      .catch(() => {
+        if (!cancelled) setLastUsedExportAgents(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  const handlePersistLastUsedAgents = useCallback(
+    (agents: string[]) => {
+      setLastUsedExportAgents(agents);
+      if (id) {
+        void api.setSettings(projectLastUsedAgentsKey(id), JSON.stringify(agents)).catch(() => {});
+      }
+    },
+    [id],
+  );
+
+  const initialSheetAgents = useMemo(() => {
+    const availableKeys = new Set(
+      exportTargets
+        .filter((tt) => tt.installed && tt.enabled)
+        .map((tt) => tt.key)
+    );
+    if (lastUsedExportAgents && lastUsedExportAgents.length > 0) {
+      const filtered = lastUsedExportAgents.filter((k) => availableKeys.has(k));
+      if (filtered.length > 0) return filtered;
+    }
+    return selectedExportAgents.filter((k) => availableKeys.has(k));
+  }, [exportTargets, lastUsedExportAgents, selectedExportAgents]);
+
+  const enabledCount = groupedSkills.filter((s) => s.enabledCount > 0).length;
+  const allTags = useMemo(() => {
+    const tags = new Set<string>();
+    for (const skill of groupedSkills) {
+      for (const tag of skill.tags) {
+        if (tag.trim()) tags.add(tag);
+      }
+    }
+    return Array.from(tags).sort((a, b) => a.localeCompare(b));
+  }, [groupedSkills]);
+  const selectedSkills = useMemo(
+    () => groupedSkills.filter((skill) => selectedIds.has(getSkillKey(skill))),
+    [getSkillKey, groupedSkills, selectedIds]
+  );
+  const selectedTaggableSkills = useMemo(
+    () => selectedSkills.filter((skill) => skill.centerSkillIds.length > 0),
+    [selectedSkills]
+  );
+  const anyCanUpdateCenter = useMemo(
+    () => selectedSkills.some((skill) => (
+      skill.status === "project_only" ||
+      skill.status === "project_newer" ||
+      skill.status === "diverged"
+    )),
+    [selectedSkills]
+  );
+  const anyCanUpdateProject = useMemo(
+    () => selectedSkills.some((skill) => (
+      skill.status === "project_newer" ||
+      skill.status === "center_newer" ||
+      skill.status === "diverged"
+    )),
+    [selectedSkills]
+  );
+
+  const handleOpenDetail = async (skill: ProjectSkillGroup) => {
     setDetailSkill(skill);
     setDocContent(null);
     setDocLoading(true);
-    if (!project) return;
+    setCenterDocContent(null);
+    setCenterDocLoading(false);
+    if (!project || !id) return;
+
+    const centerSkillId = skill.centerSkillIds.length > 0 ? skill.centerSkillIds[0] : null;
+
+    if (centerSkillId) {
+      setCenterDocLoading(true);
+      api.getSkillDocument(centerSkillId)
+        .then((doc) => setCenterDocContent(doc.content))
+        .catch(() => setCenterDocContent(null))
+        .finally(() => setCenterDocLoading(false));
+    }
+
     try {
-      const doc = await api.getProjectSkillDocument(project.path, skill.dir_name);
+      const doc = await api.getProjectSkillDocument(
+        id,
+        skill.primaryVariant.relative_path,
+        skill.primaryVariant.agent
+      );
       setDocContent(doc.content);
     } catch {
       setDocContent(null);
@@ -149,13 +504,13 @@ export function ProjectDetail() {
     }
   };
 
-  const handleUpdateCenter = async (skill: ProjectSkill) => {
+  const handleUpdateCenter = async (skill: ProjectSkillGroup) => {
     if (!id) return;
-    setUpdatingCenterSkill(skill.dir_name);
+    setUpdatingCenterSkill(getSkillKey(skill));
     try {
-      await api.updateProjectSkillToCenter(id, skill.dir_name);
+      await api.updateProjectSkillToCenter(id, skill.primaryVariant.relative_path, skill.primaryVariant.agent);
       toast.success(t("project.updateCenterSuccess", { name: skill.name }));
-      await Promise.all([refreshManagedSkills(), refreshScenarios(), loadSkills()]);
+      await Promise.all([refreshManagedSkills(), refreshPresets(), loadSkills()]);
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, t("common.error")));
     } finally {
@@ -163,17 +518,21 @@ export function ProjectDetail() {
     }
   };
 
-  const handleUpdateProject = async (skill: ProjectSkill) => {
+  const handleUpdateProject = async (skill: ProjectSkillGroup) => {
     if (!id) return;
-    setUpdatingProjectSkill(skill.dir_name);
+    setUpdatingProjectSkill(getSkillKey(skill));
     try {
-      await api.updateProjectSkillFromCenter(id, skill.dir_name);
-      if (skill.sync_status === "project_newer") {
+      await Promise.all(
+        skill.variants.map((variant) =>
+          api.updateProjectSkillFromCenter(id, variant.relative_path, variant.agent)
+        )
+      );
+      if (skill.status === "project_newer") {
         toast.success(t("project.resetFromCenterSuccess", { name: skill.name }));
       } else {
         toast.success(t("project.updateProjectSuccess", { name: skill.name }));
       }
-      await loadSkills();
+      await Promise.all([loadSkills(), refreshProjects()]);
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, t("common.error")));
     } finally {
@@ -181,12 +540,17 @@ export function ProjectDetail() {
     }
   };
 
-  const handleToggleSkill = async (skill: ProjectSkill) => {
+  const handleToggleSkill = async (skill: ProjectSkillGroup) => {
     if (!id) return;
-    setTogglingSkill(skill.dir_name);
+    setTogglingSkill(getSkillKey(skill));
     try {
-      await api.toggleProjectSkill(id, skill.dir_name, !skill.enabled);
-      if (skill.enabled) {
+      const nextEnabled = skill.enabledCount !== skill.totalCount;
+      await Promise.all(
+        skill.variants.map((variant) =>
+          api.toggleProjectSkill(id, variant.relative_path, variant.agent, nextEnabled)
+        )
+      );
+      if (skill.enabledCount === skill.totalCount) {
         toast.success(t("project.skillDisabled", { name: skill.name }));
       } else {
         toast.success(t("project.skillEnabled", { name: skill.name }));
@@ -199,49 +563,46 @@ export function ProjectDetail() {
     }
   };
 
-  const handleExportFromCenter = async (managedSkill: ManagedSkill) => {
+  const handleToggleDetailAgent = async (skill: ProjectSkillGroup, agentKey: string, enabled: boolean) => {
     if (!id) return;
+    if (togglingAgentTarget) return;
+    const target = exportTargets.find((item) => item.key === agentKey);
+    const displayName = target?.display_name ?? agentKey;
+    const existingVariant = skill.variants.find((variant) => variant.agent === agentKey);
+
+    setTogglingAgentTarget({ skillKey: getSkillKey(skill), agent: agentKey });
     try {
-      await api.exportSkillToProject(managedSkill.id, id);
-      toast.success(t("project.importFromCenterSuccess", { name: managedSkill.name }));
-      setShowExportDialog(false);
-      await loadSkills();
+      if (enabled) {
+        const centerSkillId = skill.centerSkillIds[0];
+        if (!centerSkillId) {
+          toast.error(t("project.agentAddRequiresCenter", { agent: displayName }));
+          return;
+        }
+        await api.exportSkillToProject(centerSkillId, id, [agentKey]);
+        toast.success(t("project.agentAdded", { agent: displayName, name: skill.name }));
+      } else {
+        if (!existingVariant) return;
+        await api.deleteProjectSkill(id, existingVariant.relative_path, agentKey);
+        toast.success(t("project.agentRemoved", { agent: displayName, name: skill.name }));
+      }
+      await Promise.all([loadSkills(), refreshProjects()]);
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, t("common.error")));
+    } finally {
+      setTogglingAgentTarget(null);
     }
-  };
-
-  const handleBatchExportFromCenter = async (skills: ManagedSkill[]) => {
-    if (!id) return;
-    let imported = 0;
-    let failed = 0;
-    for (const skill of skills) {
-      try {
-        await api.exportSkillToProject(skill.id, id);
-        imported++;
-      } catch {
-        failed++;
-        // continue with remaining
-      }
-    }
-    if (imported > 0) {
-      toast.success(t("project.batchImported", { count: imported }));
-    }
-    if (failed > 0) {
-      toast.error(t("project.batchImportFailed", { count: failed }));
-    }
-    if (imported > 0) {
-      setShowExportDialog(false);
-    }
-    await loadSkills();
   };
 
   const handleDeleteSkill = async () => {
     if (!id || !deleteTarget) return;
     try {
-      await api.deleteProjectSkill(id, deleteTarget.dir_name);
+      await Promise.all(
+        deleteTarget.variants.map((variant) =>
+          api.deleteProjectSkill(id, variant.relative_path, variant.agent)
+        )
+      );
       toast.success(t("project.skillDeleted", { name: deleteTarget.name }));
-      await loadSkills();
+      await Promise.all([loadSkills(), refreshProjects()]);
     } catch (error: unknown) {
       toast.error(getErrorMessage(error, t("common.error")));
     }
@@ -249,12 +610,15 @@ export function ProjectDetail() {
 
   const handleBatchDeleteProject = async () => {
     if (!id) return;
-    const dirNames = Array.from(selectedIds);
     let deleted = 0;
     let failed = 0;
-    for (const dirName of dirNames) {
+    for (const skill of selectedSkills) {
       try {
-        await api.deleteProjectSkill(id, dirName);
+        await Promise.all(
+          skill.variants.map((variant) =>
+            api.deleteProjectSkill(id, variant.relative_path, variant.agent)
+          )
+        );
         deleted++;
       } catch {
         failed++;
@@ -269,22 +633,29 @@ export function ProjectDetail() {
     }
     exitMultiSelect();
     setBatchDeleteConfirm(false);
-    await loadSkills();
+    await Promise.all([loadSkills(), refreshProjects()]);
   };
 
   const handleBatchToggleProject = async () => {
     if (!id) return;
-    const selectedSkillsList = skills.filter((s) => selectedIds.has(s.dir_name));
     const enabling = anyDisabled;
     let count = 0;
     let failed = 0;
-    for (const skill of selectedSkillsList) {
+    for (const skill of selectedSkills) {
       try {
-        if (enabling && !skill.enabled) {
-          await api.toggleProjectSkill(id, skill.dir_name, true);
+        if (enabling && skill.enabledCount !== skill.totalCount) {
+          await Promise.all(
+            skill.variants.map((variant) =>
+              api.toggleProjectSkill(id, variant.relative_path, variant.agent, true)
+            )
+          );
           count++;
-        } else if (!enabling && skill.enabled) {
-          await api.toggleProjectSkill(id, skill.dir_name, false);
+        } else if (!enabling && skill.enabledCount > 0) {
+          await Promise.all(
+            skill.variants.map((variant) =>
+              api.toggleProjectSkill(id, variant.relative_path, variant.agent, false)
+            )
+          );
           count++;
         }
       } catch {
@@ -303,96 +674,325 @@ export function ProjectDetail() {
     await loadSkills();
   };
 
+  const handleBatchUpdateCenter = async () => {
+    if (!id) return;
+    setBatchUpdatingCenter(true);
+    try {
+      let updated = 0;
+      let failed = 0;
+      for (const skill of selectedSkills) {
+        const canUpdateCenter =
+          skill.status === "project_only" ||
+          skill.status === "project_newer" ||
+          skill.status === "diverged";
+        if (!canUpdateCenter) continue;
+        try {
+          await api.updateProjectSkillToCenter(id, skill.primaryVariant.relative_path, skill.primaryVariant.agent);
+          updated++;
+        } catch {
+          failed++;
+        }
+      }
+      if (updated > 0) {
+        toast.success(t("project.batchUpdatedCenter", { count: updated }));
+      }
+      if (failed > 0) {
+        toast.error(t("project.batchUpdateCenterFailed", { count: failed }));
+      }
+      await Promise.all([refreshManagedSkills(), refreshPresets(), loadSkills()]);
+    } finally {
+      setBatchUpdatingCenter(false);
+    }
+  };
+
+  const handleBatchUpdateProject = async () => {
+    if (!id) return;
+    setBatchUpdatingProject(true);
+    try {
+      let updated = 0;
+      let failed = 0;
+      for (const skill of selectedSkills) {
+        const canUpdateProject =
+          skill.status === "project_newer" ||
+          skill.status === "center_newer" ||
+          skill.status === "diverged";
+        if (!canUpdateProject) continue;
+        try {
+          await Promise.all(
+            skill.variants.map((variant) =>
+              api.updateProjectSkillFromCenter(id, variant.relative_path, variant.agent)
+            )
+          );
+          updated++;
+        } catch {
+          failed++;
+        }
+      }
+      if (updated > 0) {
+        toast.success(t("project.batchUpdatedProject", { count: updated }));
+      }
+      if (failed > 0) {
+        toast.error(t("project.batchUpdateProjectFailed", { count: failed }));
+      }
+      await Promise.all([loadSkills(), refreshProjects()]);
+    } finally {
+      setBatchUpdatingProject(false);
+    }
+  };
+
+  const handleBatchEditTags = async (adds: string[], removes: string[]) => {
+    const skillMap = new Map(managedSkills.map((skill) => [skill.id, skill]));
+    const centerIds = Array.from(new Set(selectedTaggableSkills.flatMap((skill) => skill.centerSkillIds)));
+    let updated = 0;
+    let failed = 0;
+
+    for (const centerSkillId of centerIds) {
+      const centerSkill = skillMap.get(centerSkillId);
+      if (!centerSkill) continue;
+      const removeSet = new Set(removes);
+      const nextTags = centerSkill.tags.filter((tag) => !removeSet.has(tag));
+      for (const tag of adds) {
+        if (!nextTags.includes(tag)) nextTags.push(tag);
+      }
+      const changed =
+        nextTags.length !== centerSkill.tags.length ||
+        nextTags.some((tag, index) => tag !== centerSkill.tags[index]);
+      if (!changed) continue;
+
+      try {
+        await api.setSkillTags(centerSkillId, nextTags);
+        updated++;
+      } catch {
+        failed++;
+      }
+    }
+
+    if (updated > 0) {
+      toast.success(t("project.batchTagsUpdated", { count: updated }));
+    }
+    if (failed > 0) {
+      toast.error(t("project.batchTagsFailed", { count: failed }));
+    }
+    await Promise.all([refreshManagedSkills(), loadSkills()]);
+  };
+
+  const presetSkillExistsInProject = useCallback(
+    (skill: ManagedSkill, agentKey: string) => {
+      return findProjectPresetVariant(skill, agentKey) !== null;
+    },
+    [findProjectPresetVariant]
+  );
+
+  const handleAddPresetSkillToProject = useCallback(
+    async (skill: ManagedSkill, agentKey: string) => {
+      if (!id) return;
+      await api.exportSkillToProject(skill.id, id, [agentKey]);
+    },
+    [id]
+  );
+
+  const handleRemovePresetSkillFromProject = useCallback(
+    async (skill: ManagedSkill, agentKey: string) => {
+      if (!id) return;
+      const projectVariant = findProjectPresetVariant(skill, agentKey);
+      if (!projectVariant) throw new Error(t("project.skillDirectoryNotFound"));
+      await api.deleteProjectSkill(id, projectVariant.relative_path, agentKey);
+    },
+    [findProjectPresetVariant, id, t]
+  );
+
+  const handlePresetActionComplete = useCallback(async () => {
+    await Promise.all([loadSkills(), refreshProjects()]);
+  }, [loadSkills, refreshProjects]);
+
   if (!project) return null;
 
   return (
     <div className="app-page">
-      <div className="app-page-header pr-2">
-        <h1 className="app-page-title flex items-center gap-2.5">
-          <FolderOpen className="w-5 h-5 text-accent" />
-          {project.name}
-          <span className="app-badge">{skills.length}</span>
-        </h1>
-        <p className="app-page-subtitle">
-          {project.path}
-          {skills.length > 0 && ` \u00B7 ${enabledCount} / ${skills.length} ${t("project.enabled")}`}
-        </p>
-      </div>
-
-      <div className="app-toolbar">
-        <div className="flex flex-1 gap-3">
-          <div className="relative w-full max-w-[280px]">
-            <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder={t("project.searchPlaceholder")}
-              className="app-input w-full pl-9 font-medium"
-              autoCapitalize="none"
-              autoCorrect="off"
-              spellCheck={false}
-            />
+      <div className="app-page-header flex flex-col gap-2.5 pb-3 pr-2">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0 flex-[1_1_260px]">
+            <h1 className="app-page-title flex items-center gap-2.5">
+              <FolderOpen className="h-5 w-5 text-accent" />
+              {project.name}
+              <span className="app-badge">{groupedSkills.length}</span>
+            </h1>
+            <p className="mt-1 truncate text-[12px] leading-5 text-muted" title={project.path}>
+              {project.path}
+              {groupedSkills.length > 0 && ` \u00B7 ${enabledCount} / ${groupedSkills.length} ${t("project.enabled")}`}
+            </p>
           </div>
-          <div className="app-segmented">
-            {(["all", "enabled", "disabled"] as const).map((mode) => (
+
+          <div className="flex min-w-0 flex-[2_1_560px] flex-wrap items-center justify-end gap-2">
+            <div className="relative w-full min-w-[220px] max-w-[300px]">
+              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder={t("project.searchPlaceholder")}
+                className="app-input h-9 w-full rounded-md pl-8 font-medium"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+              />
+            </div>
+            <div className="app-segmented shrink-0">
+              {(["all", "enabled", "disabled"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  onClick={() => setFilterMode(mode)}
+                  className={cn(
+                    "app-segmented-button",
+                    filterMode === mode && "app-segmented-button-active"
+                  )}
+                >
+                  {t(`project.filters.${mode}`)}
+                </button>
+              ))}
+            </div>
+
+            <div className="app-segmented shrink-0">
               <button
-                key={mode}
-                onClick={() => setFilterMode(mode)}
+                onClick={loadSkills}
+                className="rounded-md p-2 text-muted transition-colors outline-none hover:bg-surface-hover hover:text-secondary"
+                title={t("common.refresh")}
+              >
+                <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
+              </button>
+              <button
+                onClick={() => setViewMode("grid")}
                 className={cn(
-                  "app-segmented-button",
-                  filterMode === mode && "app-segmented-button-active"
+                  "rounded-md p-2 transition-colors outline-none",
+                  viewMode === "grid" ? "bg-surface-active text-secondary" : "text-muted hover:text-tertiary"
                 )}
               >
-                {t(`project.filters.${mode}`)}
+                <LayoutGrid className="h-4 w-4" />
               </button>
-            ))}
+              <button
+                onClick={() => setViewMode("list")}
+                className={cn(
+                  "rounded-md p-2 transition-colors outline-none",
+                  viewMode === "list" ? "bg-surface-active text-secondary" : "text-muted hover:text-tertiary"
+                )}
+              >
+                <List className="h-4 w-4" />
+              </button>
+              <button
+                onClick={() => isMultiSelect ? exitMultiSelect() : setIsMultiSelect(true)}
+                className={cn(
+                  "rounded-md p-2 transition-colors outline-none",
+                  isMultiSelect ? "bg-surface-active text-secondary" : "text-muted hover:text-tertiary"
+                )}
+                title={isMultiSelect ? t("project.cancelSelect") : t("project.selectMode")}
+              >
+                <SquareCheck className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="relative shrink-0">
+              <button
+                onClick={() => {
+                  setShowExportDialog(true);
+                  dismissAddCallout();
+                }}
+                className="inline-flex h-9 items-center gap-1.5 rounded-md bg-accent px-3 text-[13px] font-medium text-white transition-colors hover:bg-accent-hover"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                {t("project.addSkill")}
+              </button>
+              {showAddCallout && groupedSkills.length > 0 && (
+                <div className="absolute right-0 top-full z-20 mt-2 w-72 rounded-md border border-border bg-surface p-3 text-[12px] leading-snug shadow-lg">
+                  <button
+                    onClick={dismissAddCallout}
+                    className="absolute right-1.5 top-1.5 rounded p-0.5 text-faint hover:text-secondary"
+                    aria-label={t("common.close")}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                  <p className="pr-4 text-secondary">{t("project.addCallout")}</p>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 
-        <div className="app-segmented">
-          <button
-            onClick={() => setShowExportDialog(true)}
-            className="inline-flex items-center gap-1 rounded-md px-3 py-2 text-[13px] font-medium text-muted transition-colors hover:bg-surface-hover hover:text-secondary"
-          >
-            <Download className="h-3.5 w-3.5" />
-            {t("project.updateProject")}
-          </button>
-          <button
-            onClick={loadSkills}
-            className="ml-2 mr-2 inline-flex items-center gap-1 rounded-md border-l border-border-subtle pl-4 pr-3 py-2 text-[13px] font-medium text-muted transition-colors hover:bg-surface-hover hover:text-secondary"
-          >
-            <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
-          </button>
-          <button
-            onClick={() => setViewMode("grid")}
-            className={cn(
-              "rounded-md p-2 transition-colors outline-none",
-              viewMode === "grid" ? "bg-surface-active text-secondary" : "text-muted hover:text-tertiary"
-            )}
-          >
-            <LayoutGrid className="h-4 w-4" />
-          </button>
-          <button
-            onClick={() => setViewMode("list")}
-            className={cn(
-              "rounded-md p-2 transition-colors outline-none",
-              viewMode === "list" ? "bg-surface-active text-secondary" : "text-muted hover:text-tertiary"
-            )}
-          >
-            <List className="h-4 w-4" />
-          </button>
-          <button
-            onClick={() => isMultiSelect ? exitMultiSelect() : setIsMultiSelect(true)}
-            className={cn(
-              "rounded-md p-2 transition-colors outline-none",
-              isMultiSelect ? "bg-surface-active text-secondary" : "text-muted hover:text-tertiary"
-            )}
-            title={isMultiSelect ? t("project.cancelSelect") : t("project.selectMode")}
-          >
-            <SquareCheck className="h-4 w-4" />
-          </button>
-        </div>
+        {allTags.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[12px] text-muted">{t("mySkills.tags.filter")}</span>
+            <button
+              onClick={() => setTagFilters(new Set())}
+              className={cn(
+                "rounded-full px-2.5 py-0.5 text-[12px] font-medium transition-colors",
+                tagFilters.size === 0
+                  ? "bg-accent text-white dark:bg-accent dark:text-white"
+                  : "bg-surface-hover text-muted hover:text-secondary"
+              )}
+            >
+              {t("mySkills.tags.allTags")}
+            </button>
+            {groupedSkills.some((s) => s.tags.length === 0) && (() => {
+              const isActive = tagFilters.has(UNTAGGED_FILTER);
+              return (
+                <button
+                  onClick={() => {
+                    setTagFilters((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(UNTAGGED_FILTER)) next.delete(UNTAGGED_FILTER);
+                      else next.add(UNTAGGED_FILTER);
+                      return next;
+                    });
+                  }}
+                  className={cn(
+                    "inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-[12px] font-medium transition-colors",
+                    isActive
+                      ? "bg-surface-active text-primary"
+                      : "border border-dashed border-border text-muted hover:text-secondary"
+                  )}
+                  title={t("mySkills.tags.untagged")}
+                >
+                  <CircleSlash className="h-3 w-3" />
+                  {t("mySkills.tags.untagged")}
+                </button>
+              );
+            })()}
+            {allTags.map((tag) => {
+              const active = tagFilters.has(tag);
+              return (
+                <button
+                  key={tag}
+                  onClick={() => {
+                    setTagFilters((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(tag)) next.delete(tag);
+                      else next.add(tag);
+                      return next;
+                    });
+                  }}
+                  className={cn(
+                    "rounded-full px-2.5 py-0.5 text-[12px] font-medium transition-colors",
+                    active ? getTagActiveColor(tag, allTags) : getTagColor(tag, allTags)
+                  )}
+                >
+                  {tag}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* Preset bar */}
+        {presets.length > 0 && selectedExportAgents.length > 0 && (
+          <PresetBar
+            presets={presets}
+            managedSkills={managedSkills}
+            agentKeys={selectedExportAgents}
+            existsInWorkspace={presetSkillExistsInProject}
+            onAddSkill={handleAddPresetSkillToProject}
+            onRemoveSkill={handleRemovePresetSkillFromProject}
+            onComplete={handlePresetActionComplete}
+          />
+        )}
       </div>
 
       {isMultiSelect && (
@@ -400,21 +1000,31 @@ export function ProjectDetail() {
           selectedCount={selectedIds.size}
           isAllSelected={isAllSelected}
           anyDisabled={anyDisabled}
-          showToggle={true}
+          anyCanUpdateCenter={anyCanUpdateCenter}
+          anyCanUpdateProject={anyCanUpdateProject}
+          showToggle={project.supports_skill_toggle}
+          updatingCenter={batchUpdatingCenter}
+          updatingProject={batchUpdatingProject}
           labels={{
             hint: t("project.selectHint"),
             selected: t("project.selectedCount", { count: selectedIds.size }),
+            updateCenter: t("project.batchUpdateCenter", { count: selectedIds.size }),
+            updateProject: t("project.batchUpdateProject", { count: selectedIds.size }),
             delete: t("project.deleteSelected", { count: selectedIds.size }),
             enable: t("project.batchEnable", { count: selectedIds.size }),
             disable: t("project.batchDisable", { count: selectedIds.size }),
             selectAll: t("project.selectAll"),
             deselectAll: t("project.deselectAll"),
             cancel: t("common.cancel"),
+            editTags: t("project.batchEditTags", { count: selectedTaggableSkills.length }),
           }}
+          onUpdateCenter={handleBatchUpdateCenter}
+          onUpdateProject={handleBatchUpdateProject}
           onDelete={() => setBatchDeleteConfirm(true)}
           onToggle={handleBatchToggleProject}
           onSelectAll={handleSelectAll}
           onCancel={exitMultiSelect}
+          onEditTags={selectedTaggableSkills.length > 0 ? () => setBatchTagDialogOpen(true) : undefined}
         />
       )}
 
@@ -426,11 +1036,23 @@ export function ProjectDetail() {
         <div className="flex flex-1 flex-col items-center justify-center pb-20 text-center">
           <Layers className="mb-4 h-12 w-12 text-faint" />
           <h3 className="mb-1.5 text-[14px] font-semibold text-tertiary">
-            {skills.length === 0 ? t("project.noSkills") : t("mySkills.noMatch")}
+            {groupedSkills.length === 0 ? t("project.noSkills") : t("mySkills.noMatch")}
           </h3>
-          <p className="text-[13px] text-muted">
-            {skills.length === 0 ? t("project.noSkillsHint") : ""}
+          <p className="max-w-md text-[13px] text-muted">
+            {groupedSkills.length === 0 ? t("project.noSkillsHint") : ""}
           </p>
+          {groupedSkills.length === 0 && (
+            <button
+              onClick={() => {
+                setShowExportDialog(true);
+                dismissAddCallout();
+              }}
+              className="mt-4 inline-flex items-center gap-1.5 rounded-md bg-accent px-4 py-2 text-[13px] font-medium text-white transition-colors hover:bg-accent-hover"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              {t("project.addSkillsCta")}
+            </button>
+          )}
         </div>
       ) : (
         <div
@@ -442,32 +1064,35 @@ export function ProjectDetail() {
           )}
         >
           {filtered.map((skill) => {
-            const isSelected = selectedIds.has(skill.dir_name);
-            const isUpdatingCenter = updatingCenterSkill === skill.dir_name;
-            const isUpdatingProject = updatingProjectSkill === skill.dir_name;
-            const isToggling = togglingSkill === skill.dir_name;
+            const skillKey = getSkillKey(skill);
+            const isSelected = selectedIds.has(skillKey);
+            const isUpdatingCenter = updatingCenterSkill === skillKey;
+            const isUpdatingProject = updatingProjectSkill === skillKey;
+            const isToggling = togglingSkill === skillKey;
             const canUpdateCenter =
-              skill.sync_status === "project_only" ||
-              skill.sync_status === "project_newer" ||
-              skill.sync_status === "diverged";
+              skill.status === "project_only" ||
+              skill.status === "project_newer" ||
+              skill.status === "diverged";
             const canUpdateProject =
-              skill.sync_status === "project_newer" ||
-              skill.sync_status === "center_newer" ||
-              skill.sync_status === "diverged";
-            const statusMeta = getSyncStatusMeta(t, skill.sync_status);
+              skill.status === "project_newer" ||
+              skill.status === "center_newer" ||
+              skill.status === "diverged";
+            const statusMeta = getSyncStatusMeta(t, skill.status);
+            const assignedAgents = getAssignedAgents(skill.variants);
 
             if (viewMode === "grid") {
               return (
                 <div
-                  key={skill.dir_name}
+                  key={skillKey}
                   className={cn(
-                    "app-panel group relative flex flex-col overflow-hidden transition-all hover:border-border hover:bg-surface-hover",
-                    skill.enabled && "border-l-2 border-l-accent",
-                    !skill.enabled && "opacity-60",
-                    isMultiSelect && "cursor-pointer",
+                    "app-panel group relative flex h-full cursor-pointer flex-col overflow-hidden transition-all hover:border-border hover:bg-surface-hover",
+                    skill.enabledCount > 0 && "border-l-2 border-l-accent",
+                    skill.enabledCount === 0 && "opacity-60",
                     isMultiSelect && isSelected && "ring-1 ring-accent border-accent/40"
                   )}
-                  onClick={isMultiSelect ? () => toggleSelect(skill.dir_name) : undefined}
+                  onClick={() =>
+                    isMultiSelect ? toggleSelect(skillKey) : handleOpenDetail(skill)
+                  }
                 >
                   <div className="flex items-center gap-2.5 px-3.5 pt-3 pb-1.5">
                     {isMultiSelect && (
@@ -477,8 +1102,6 @@ export function ProjectDetail() {
                     )}
                     <h3
                       className="flex-1 truncate text-[14px] font-semibold text-primary"
-                      onClick={!isMultiSelect ? () => handleOpenDetail(skill) : undefined}
-                      style={!isMultiSelect ? { cursor: "pointer" } : undefined}
                       title={skill.name}
                     >
                       {skill.name}
@@ -495,14 +1118,29 @@ export function ProjectDetail() {
                     <p className="text-[13px] leading-[18px] text-muted truncate">
                       {skill.description || "\u2014"}
                     </p>
+                    {skill.tags.length > 0 && (
+                      <div className="mt-2 flex flex-wrap items-center gap-1">
+                        {skill.tags.map((tag) => (
+                          <span
+                            key={tag}
+                            className={cn(
+                              "inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium",
+                              getTagColor(tag, allTags)
+                            )}
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   <div className="mt-auto flex items-center justify-between gap-2 border-t border-border-subtle px-3.5 py-2.5">
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex min-w-0 items-center gap-1.5">
                       <span className={cn("rounded-full px-2 py-0.5 text-[12px] font-medium", statusMeta.className)}>
                         {statusMeta.label}
                       </span>
-                      {!skill.enabled && (
+                      {skill.enabledCount === 0 && (
                         <span className="rounded-full bg-red-500/10 px-2 py-0.5 text-[12px] font-medium text-red-600 dark:text-red-300">
                           {t("project.disabled")}
                         </span>
@@ -510,9 +1148,21 @@ export function ProjectDetail() {
                     </div>
                     {!isMultiSelect && (
                       <div className="flex items-center gap-1.5 shrink-0">
+                        <ProjectAgentDots
+                          assignedAgents={assignedAgents}
+                          targets={exportTargets}
+                          limit={4}
+                          size="sm"
+                          onToggle={(agentKey, enabled) => handleToggleDetailAgent(skill, agentKey, enabled)}
+                          pendingKey={
+                            togglingAgentTarget?.skillKey === skillKey
+                              ? togglingAgentTarget.agent
+                              : null
+                          }
+                        />
                         {canUpdateCenter && (
                           <button
-                            onClick={() => handleUpdateCenter(skill)}
+                            onClick={(e) => { e.stopPropagation(); handleUpdateCenter(skill); }}
                             disabled={isUpdatingCenter || isUpdatingProject}
                             className="rounded px-2 py-1 text-[13px] font-medium text-muted transition-colors outline-none hover:bg-surface-hover hover:text-secondary disabled:opacity-50"
                             title={t("project.updateCenter")}
@@ -526,45 +1176,47 @@ export function ProjectDetail() {
                         )}
                         {canUpdateProject && (
                           <button
-                            onClick={() => handleUpdateProject(skill)}
+                            onClick={(e) => { e.stopPropagation(); handleUpdateProject(skill); }}
                             disabled={isUpdatingCenter || isUpdatingProject}
                             className="rounded px-2 py-1 text-[13px] font-medium text-muted transition-colors outline-none hover:bg-surface-hover hover:text-secondary disabled:opacity-50"
                             title={
-                              skill.sync_status === "project_newer"
+                              skill.status === "project_newer"
                                 ? t("project.resetFromCenter")
                                 : t("project.updateProject")
                             }
                           >
                             {isUpdatingProject ? (
                               <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            ) : skill.sync_status === "project_newer" ? (
+                            ) : skill.status === "project_newer" ? (
                               <RotateCcw className="h-3.5 w-3.5" />
                             ) : (
                               <Download className="h-3.5 w-3.5" />
                             )}
                           </button>
                         )}
+                        {project.supports_skill_toggle ? (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); handleToggleSkill(skill); }}
+                            disabled={isToggling}
+                            className={cn(
+                              "rounded px-2 py-1 text-[13px] font-medium transition-colors outline-none",
+                              skill.enabledCount > 0
+                                ? "text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10"
+                                : "text-muted hover:bg-surface-hover hover:text-secondary"
+                            )}
+                          >
+                            {isToggling ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : skill.enabledCount === skill.totalCount ? (
+                              t("project.enabled")
+                            ) : (
+                              t("project.enableSkill")
+                            )}
+                          </button>
+                        ) : null}
                         <button
-                          onClick={() => handleToggleSkill(skill)}
-                          disabled={isToggling}
-                          className={cn(
-                            "rounded px-2 py-1 text-[13px] font-medium transition-colors outline-none",
-                            skill.enabled
-                              ? "text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10"
-                              : "text-muted hover:bg-surface-hover hover:text-secondary"
-                          )}
-                        >
-                          {isToggling ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          ) : skill.enabled ? (
-                            t("project.enabled")
-                          ) : (
-                            t("project.enableSkill")
-                          )}
-                        </button>
-                        <button
-                          onClick={() => setDeleteTarget(skill)}
-                          className="rounded px-2 py-1 text-muted transition-colors outline-none opacity-0 group-hover:opacity-100 hover:bg-red-500/10 hover:text-red-500"
+                          onClick={(e) => { e.stopPropagation(); setDeleteTarget(skill); }}
+                          className="rounded px-2 py-1 text-muted transition-colors outline-none hover:bg-red-500/10 hover:text-red-500"
                           title={t("project.deleteSkill")}
                         >
                           <Trash2 className="h-3.5 w-3.5" />
@@ -579,15 +1231,16 @@ export function ProjectDetail() {
             // List view
             return (
               <div
-                key={skill.dir_name}
+                key={skillKey}
                 className={cn(
-                  "app-panel group flex items-center gap-3.5 rounded-xl border-transparent px-3.5 py-3 transition-all hover:border-border hover:bg-surface-hover",
-                  skill.enabled && "border-l-2 border-l-accent",
-                  !skill.enabled && "opacity-60",
-                  isMultiSelect && "cursor-pointer",
+                  "app-panel group flex cursor-pointer items-center gap-3.5 rounded-xl border-transparent px-3.5 py-3 transition-all hover:border-border hover:bg-surface-hover",
+                  skill.enabledCount > 0 && "border-l-2 border-l-accent",
+                  skill.enabledCount === 0 && "opacity-60",
                   isMultiSelect && isSelected && "ring-1 ring-accent border-accent/40"
                 )}
-                onClick={isMultiSelect ? () => toggleSelect(skill.dir_name) : undefined}
+                onClick={() =>
+                  isMultiSelect ? toggleSelect(skillKey) : handleOpenDetail(skill)
+                }
               >
                 {isMultiSelect && (
                   isSelected
@@ -596,8 +1249,6 @@ export function ProjectDetail() {
                 )}
                 <h3
                   className="w-[180px] shrink-0 truncate text-[14px] font-semibold text-secondary"
-                  onClick={!isMultiSelect ? () => handleOpenDetail(skill) : undefined}
-                  style={!isMultiSelect ? { cursor: "pointer" } : undefined}
                   title={skill.name}
                 >
                   {skill.name}
@@ -607,11 +1258,27 @@ export function ProjectDetail() {
                   {skill.description || "\u2014"}
                 </p>
 
+                {skill.tags.length > 0 && (
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    {skill.tags.map((tag) => (
+                      <span
+                        key={tag}
+                        className={cn(
+                          "inline-flex items-center rounded-full px-1.5 py-0.5 text-[11px] font-medium",
+                          getTagColor(tag, allTags)
+                        )}
+                      >
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
                 <div className="flex shrink-0 items-center gap-2.5">
                   <span className={cn("rounded-full px-2 py-0.5 text-[12px] font-medium", statusMeta.className)}>
                     {statusMeta.label}
                   </span>
-                  {!skill.enabled && (
+                  {skill.enabledCount === 0 && (
                     <span className="rounded-full bg-red-500/10 px-2 py-0.5 text-[12px] font-medium text-red-600 dark:text-red-300">
                       {t("project.disabled")}
                     </span>
@@ -622,70 +1289,90 @@ export function ProjectDetail() {
                       {skill.files.length}
                     </span>
                   )}
+                  <ProjectAgentDots
+                    assignedAgents={assignedAgents}
+                    targets={exportTargets}
+                    limit={4}
+                    size="sm"
+                    onToggle={
+                      isMultiSelect
+                        ? undefined
+                        : (agentKey, enabled) => handleToggleDetailAgent(skill, agentKey, enabled)
+                    }
+                    pendingKey={
+                      togglingAgentTarget?.skillKey === skillKey
+                        ? togglingAgentTarget.agent
+                        : null
+                    }
+                  />
                 </div>
 
                 {!isMultiSelect && (
-                  <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-                    {canUpdateCenter && (
-                      <button
-                        onClick={() => handleUpdateCenter(skill)}
-                        disabled={isUpdatingCenter || isUpdatingProject}
-                        className="rounded p-0.5 text-muted transition-colors hover:bg-surface-hover hover:text-secondary disabled:opacity-50"
-                        title={t("project.updateCenter")}
-                      >
-                        {isUpdatingCenter ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                          <Upload className="h-3.5 w-3.5" />
-                        )}
-                      </button>
-                    )}
-                    {canUpdateProject && (
-                      <button
-                        onClick={() => handleUpdateProject(skill)}
-                        disabled={isUpdatingCenter || isUpdatingProject}
-                        className="rounded p-0.5 text-muted transition-colors hover:bg-surface-hover hover:text-secondary disabled:opacity-50"
-                        title={
-                          skill.sync_status === "project_newer"
-                            ? t("project.resetFromCenter")
-                            : t("project.updateProject")
-                        }
-                      >
-                        {isUpdatingProject ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : skill.sync_status === "project_newer" ? (
-                          <RotateCcw className="h-3.5 w-3.5" />
-                        ) : (
-                          <Download className="h-3.5 w-3.5" />
-                        )}
-                      </button>
-                    )}
-                    <button
-                      onClick={() => handleToggleSkill(skill)}
-                      disabled={isToggling}
-                      className={cn(
-                        "rounded px-2 py-0.5 text-[13px] font-medium transition-colors outline-none",
-                        skill.enabled
-                          ? "text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10"
-                          : "text-muted hover:bg-surface-hover hover:text-secondary"
+                  <>
+                    <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                      {canUpdateCenter && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleUpdateCenter(skill); }}
+                          disabled={isUpdatingCenter || isUpdatingProject}
+                          className="rounded p-0.5 text-muted transition-colors hover:bg-surface-hover hover:text-secondary disabled:opacity-50"
+                          title={t("project.updateCenter")}
+                        >
+                          {isUpdatingCenter ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Upload className="h-3.5 w-3.5" />
+                          )}
+                        </button>
                       )}
-                    >
-                      {isToggling ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : skill.enabled ? (
-                        t("project.enabled")
-                      ) : (
-                        t("project.enableSkill")
+                      {canUpdateProject && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleUpdateProject(skill); }}
+                          disabled={isUpdatingCenter || isUpdatingProject}
+                          className="rounded p-0.5 text-muted transition-colors hover:bg-surface-hover hover:text-secondary disabled:opacity-50"
+                          title={
+                            skill.status === "project_newer"
+                              ? t("project.resetFromCenter")
+                              : t("project.updateProject")
+                          }
+                        >
+                          {isUpdatingProject ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : skill.status === "project_newer" ? (
+                            <RotateCcw className="h-3.5 w-3.5" />
+                          ) : (
+                            <Download className="h-3.5 w-3.5" />
+                          )}
+                        </button>
                       )}
-                    </button>
+                      {project.supports_skill_toggle ? (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleToggleSkill(skill); }}
+                          disabled={isToggling}
+                          className={cn(
+                            "rounded px-2 py-0.5 text-[13px] font-medium transition-colors outline-none",
+                            skill.enabledCount > 0
+                              ? "text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10"
+                              : "text-muted hover:bg-surface-hover hover:text-secondary"
+                          )}
+                        >
+                          {isToggling ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : skill.enabledCount === skill.totalCount ? (
+                            t("project.enabled")
+                          ) : (
+                            t("project.enableSkill")
+                          )}
+                        </button>
+                      ) : null}
+                    </div>
                     <button
-                      onClick={() => setDeleteTarget(skill)}
-                      className="rounded p-0.5 text-muted transition-colors hover:bg-red-500/10 hover:text-red-500"
+                      onClick={(e) => { e.stopPropagation(); setDeleteTarget(skill); }}
+                      className="shrink-0 rounded p-0.5 text-muted transition-colors hover:bg-red-500/10 hover:text-red-500"
                       title={t("project.deleteSkill")}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
-                  </div>
+                  </>
                 )}
               </div>
             );
@@ -697,8 +1384,17 @@ export function ProjectDetail() {
       {detailSkill && project && (
         <ProjectSkillDetailPanel
           skill={detailSkill}
+          targets={exportTargets}
+          togglingAgent={
+            togglingAgentTarget?.skillKey === getSkillKey(detailSkill)
+              ? togglingAgentTarget.agent
+              : null
+          }
+          onToggleAgent={(agentKey, enabled) => handleToggleDetailAgent(detailSkill, agentKey, enabled)}
           docContent={docContent}
           docLoading={docLoading}
+          centerDocContent={centerDocContent}
+          centerDocLoading={centerDocLoading}
           onClose={() => setDetailSkill(null)}
         />
       )}
@@ -723,14 +1419,32 @@ export function ProjectDetail() {
         onConfirm={handleBatchDeleteProject}
       />
 
-      {/* Export from Center Dialog */}
-      {showExportDialog && id && (
-        <ExportFromCenterDialog
-          managedSkills={managedSkills}
-          projectSkillDirNames={skills.map((s) => s.dir_name.toLowerCase())}
-          onExport={handleExportFromCenter}
-          onBatchExport={handleBatchExportFromCenter}
+      <BatchTagDialog
+        open={batchTagDialogOpen}
+        skills={selectedTaggableSkills}
+        allTags={allTags}
+        onClose={() => setBatchTagDialogOpen(false)}
+        onApply={handleBatchEditTags}
+      />
+
+      {id && (
+        <AddSkillsSheet
+          open={showExportDialog}
           onClose={() => setShowExportDialog(false)}
+          target={{
+            kind: "project",
+            projectId: id,
+            projectName: project?.name ?? "",
+            exportTargets,
+            projectSkillDirNamesByAgent,
+            projectCenterSkillIdsByAgent,
+            initialSelectedAgents: initialSheetAgents,
+            onPersistLastUsed: handlePersistLastUsedAgents,
+          }}
+          managedSkills={managedSkills}
+          onInstalled={async () => {
+            await Promise.all([loadSkills(), refreshProjects()]);
+          }}
         />
       )}
     </div>
@@ -739,285 +1453,150 @@ export function ProjectDetail() {
 
 function ProjectSkillDetailPanel({
   skill,
+  targets,
+  togglingAgent,
+  onToggleAgent,
   docContent,
   docLoading,
+  centerDocContent,
+  centerDocLoading,
   onClose,
 }: {
-  skill: ProjectSkill;
+  skill: ProjectSkillGroup;
+  targets: ProjectAgentTarget[];
+  togglingAgent: string | null;
+  onToggleAgent: (agentKey: string, enabled: boolean) => void;
   docContent: string | null;
   docLoading: boolean;
+  centerDocContent: string | null;
+  centerDocLoading: boolean;
   onClose: () => void;
 }) {
   const { t } = useTranslation();
-
-  return createPortal(
-    <div className="fixed inset-y-0 right-0 left-[220px] z-50 flex">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative flex h-full min-h-0 w-full flex-col border-l border-border-subtle bg-bg-secondary shadow-2xl animate-in slide-in-from-right duration-200">
-        <div className="border-b border-border-subtle px-6 pt-5 pb-4">
-          <div className="flex items-start justify-between mb-3">
-            <h2 className="text-lg font-semibold text-primary truncate mr-3">{skill.name}</h2>
-            <button
-              onClick={onClose}
-              className="text-muted hover:text-secondary p-1.5 rounded-[4px] hover:bg-surface-hover transition-colors outline-none shrink-0"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-          {skill.description && (
-            <p className="text-[13.5px] leading-relaxed text-secondary line-clamp-3">{skill.description}</p>
-          )}
-          <div className="flex items-center gap-4 mt-3 text-[12.5px] text-muted">
-            <div className="flex items-center gap-1.5 min-w-0">
-              <FolderOpen className="w-3.5 h-3.5 shrink-0" />
-              <span className="font-mono truncate">{skill.path}</span>
-            </div>
-            {skill.files.length > 0 && (
-              <div className="flex items-center gap-1.5 shrink-0">
-                <FileText className="w-3.5 h-3.5" />
-                {skill.files.join(", ")}
-              </div>
-            )}
-          </div>
-        </div>
-
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 scrollbar-hide">
-          {docLoading ? (
-            <div className="text-[13px] text-muted text-center mt-12">{t("common.loading")}</div>
-          ) : docContent ? (
-            <SkillMarkdown content={docContent} />
-          ) : (
-            <div className="text-[13px] text-muted text-center mt-12">{t("common.documentMissing")}</div>
-          )}
-        </div>
-      </div>
-    </div>,
-    document.body
-  );
-}
-
-function ExportFromCenterDialog({
-  managedSkills,
-  projectSkillDirNames,
-  onExport,
-  onBatchExport,
-  onClose,
-}: {
-  managedSkills: ManagedSkill[];
-  projectSkillDirNames: string[];
-  onExport: (skill: ManagedSkill) => Promise<void>;
-  onBatchExport: (skills: ManagedSkill[]) => Promise<void>;
-  onClose: () => void;
-}) {
-  const { t } = useTranslation();
-  const [search, setSearch] = useState("");
-  const [exporting, setExporting] = useState<string | null>(null);
-  const [batchExporting, setBatchExporting] = useState(false);
-  const [dirNameMap, setDirNameMap] = useState<Record<string, string>>({});
-  const [dirNameMapError, setDirNameMapError] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    const loadDirNames = async () => {
-      const names = managedSkills.map((s) => s.name);
-      if (names.length === 0) {
-        if (!cancelled) {
-          setDirNameMap({});
-          setDirNameMapError(false);
-        }
-        return;
-      }
-      try {
-        const slugified = await api.slugifySkillNames(names);
-        if (cancelled) return;
-        const map: Record<string, string> = {};
-        managedSkills.forEach((s, i) => {
-          map[s.id] = slugified[i];
-        });
-        setDirNameMap(map);
-        setDirNameMapError(false);
-      } catch {
-        if (cancelled) return;
-        setDirNameMap({});
-        setDirNameMapError(true);
-      }
+  const [contentTab, setContentTab] = useState<"local" | "diff" | "center">("local");
+  const supportsCenterDiff = skill.centerSkillIds.length > 0;
+  const toggleItems: AgentToggleItem[] = targets.map((target) => {
+    const variant = skill.variants.find((item) => item.agent === target.key);
+    return {
+      key: target.key,
+      displayName: target.display_name,
+      enabled: Boolean(variant),
+      isAvailable: target.installed && target.enabled,
+      disabled: (!variant && (!target.installed || !target.enabled)),
+      badgeLabel: !target.installed
+        ? t("mySkills.agentToggleNotInstalled")
+        : !target.enabled
+          ? t("mySkills.agentToggleDisabledGlobally")
+          : variant && !variant.enabled
+            ? t("project.disabled")
+            : null,
     };
-    loadDirNames();
-    return () => {
-      cancelled = true;
-    };
-  }, [managedSkills]);
-
-  const filtered = useMemo(() => managedSkills.filter((skill) => {
-    const matchesSearch =
-      skill.name.toLowerCase().includes(search.toLowerCase()) ||
-      (skill.description || "").toLowerCase().includes(search.toLowerCase());
-    return matchesSearch;
-  }), [managedSkills, search]);
-
-  const isAlreadyExists = useCallback((skill: ManagedSkill) => {
-    const exportDirName = dirNameMap[skill.id];
-    return dirNameMapError ? true : (exportDirName ? projectSkillDirNames.includes(exportDirName) : false);
-  }, [dirNameMap, dirNameMapError, projectSkillDirNames]);
-
-  const selectableFiltered = useMemo(
-    () => filtered.filter((s) => !isAlreadyExists(s)),
-    [filtered, isAlreadyExists]
-  );
-
-  const {
-    isMultiSelect, setIsMultiSelect,
-    selectedIds,
-    toggleSelect,
-    exitMultiSelect,
-  } = useMultiSelect({
-    items: managedSkills,
-    filtered: selectableFiltered,
-    getKey: (s) => s.id,
-    isItemActive: () => true,
   });
-
-  const selectedSelectable = useMemo(
-    () => selectableFiltered.filter((s) => selectedIds.has(s.id)),
-    [selectableFiltered, selectedIds]
+  const meta = (
+    <>
+      <div className="flex flex-wrap items-center gap-2 text-[12.5px] text-muted">
+        <ProjectAgentDots
+          assignedAgents={getAssignedAgents(skill.variants)}
+          targets={getAgentDotTargets(skill.variants).map((t) => ({
+            key: t.key,
+            display_name: t.display_name,
+            enabled: true,
+            installed: true,
+            is_custom: false,
+          }))}
+        />
+        {skill.tags.length > 0 && (
+          <>
+            <span className="mx-0.5 h-3 w-px bg-border-subtle" />
+            {skill.tags.map((tag) => (
+              <span
+                key={tag}
+                className="inline-flex items-center rounded-full bg-surface-hover px-2 py-0.5 text-[11px] font-medium text-secondary"
+              >
+                {tag}
+              </span>
+            ))}
+          </>
+        )}
+      </div>
+      <div className="mt-3 flex items-center gap-4 text-[12.5px] text-muted">
+        <div className="flex min-w-0 items-center gap-1.5">
+          <FolderOpen className="h-3.5 w-3.5 shrink-0" />
+          <span className="font-mono truncate">{skill.primaryVariant.path}</span>
+        </div>
+        {skill.files.length > 0 && (
+          <div className="flex shrink-0 items-center gap-1.5">
+            <FileText className="h-3.5 w-3.5" />
+            {skill.files.join(", ")}
+          </div>
+        )}
+      </div>
+    </>
   );
 
-  const handleExport = async (skill: ManagedSkill) => {
-    setExporting(skill.id);
-    try {
-      await onExport(skill);
-    } finally {
-      setExporting(null);
-    }
-  };
+  return (
+    <DetailSheet
+      open={true}
+      title={skill.name}
+      description={skill.description ? <p className="line-clamp-3">{skill.description}</p> : undefined}
+      meta={meta}
+      onClose={onClose}
+    >
+      <AgentToggleSection
+        items={toggleItems}
+        togglingKey={togglingAgent}
+        onToggle={onToggleAgent}
+        className="mb-4"
+      />
 
-  const handleBatchExport = async () => {
-    if (selectedSelectable.length === 0) return;
-    setBatchExporting(true);
-    try {
-      await onBatchExport(selectedSelectable);
-    } finally {
-      setBatchExporting(false);
-    }
-  };
-
-  return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full max-w-lg rounded-xl border border-border-subtle bg-bg-secondary shadow-2xl">
-        <div className="flex items-center justify-between border-b border-border-subtle px-5 py-4">
-          <h2 className="text-[14px] font-semibold text-primary">
-            {t("project.selectSkillToExport")}
-          </h2>
-          <button
-            onClick={onClose}
-            className="text-muted hover:text-secondary p-1.5 rounded-[4px] hover:bg-surface-hover transition-colors outline-none"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-
-        <div className="px-5 py-3 border-b border-border-subtle">
-          <div className="flex items-center gap-2">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
-              <input
-                type="text"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder={t("project.searchCenterSkills")}
-                className="app-input w-full pl-9 font-medium"
-                autoCapitalize="none"
-                autoCorrect="off"
-                spellCheck={false}
-                autoFocus
-              />
-            </div>
-            {selectedSelectable.length > 0 && isMultiSelect && (
-              <button
-                onClick={handleBatchExport}
-                disabled={batchExporting}
-                className="shrink-0 inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-[13px] font-medium text-white hover:bg-accent/90 disabled:opacity-50 transition-colors"
-              >
-                {batchExporting
-                  ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  : t("project.updateSelected", { count: selectedSelectable.length })}
-              </button>
-            )}
+      {supportsCenterDiff && (
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          {(["local", "diff", "center"] as const).map((tab) => (
             <button
-              onClick={() => isMultiSelect ? exitMultiSelect() : setIsMultiSelect(true)}
+              key={tab}
+              type="button"
+              onClick={() => setContentTab(tab)}
               className={cn(
-                "shrink-0 rounded-md p-2 transition-colors outline-none",
-                isMultiSelect ? "bg-surface-active text-secondary" : "text-muted hover:text-tertiary hover:bg-surface-hover"
+                "rounded-full px-3 py-1.5 text-[12px] font-medium transition-colors",
+                contentTab === tab
+                  ? "bg-accent text-white"
+                  : "bg-surface-hover text-muted hover:text-secondary"
               )}
-              title={isMultiSelect ? t("project.cancelSelect") : t("project.selectMode")}
+              disabled={(tab === "diff" || tab === "center") && centerDocLoading}
             >
-              <SquareCheck className="h-4 w-4" />
+              {tab === "local"
+                ? t("mySkills.docTabs.local")
+                : tab === "diff"
+                  ? t("mySkills.docTabs.diff")
+                  : t("project.docTabs.center")}
             </button>
-          </div>
+          ))}
         </div>
+      )}
 
-        <div className="max-h-[400px] overflow-y-auto scrollbar-hide">
-          {filtered.length === 0 ? (
-            <div className="py-12 text-center text-[13px] text-muted">
-              {t("project.noSkillsToExport")}
-            </div>
-          ) : (
-            <div className="divide-y divide-border-subtle">
-              {filtered.map((skill) => {
-                const alreadyExists = isAlreadyExists(skill);
-                const isSelected = selectedIds.has(skill.id);
-                const selectable = isMultiSelect && !alreadyExists;
-                return (
-                  <div
-                    key={skill.id}
-                    className={cn(
-                      "flex items-center gap-3 px-5 py-3 transition-colors",
-                      selectable ? "cursor-pointer hover:bg-surface-hover" : "hover:bg-surface-hover",
-                      selectable && isSelected && "bg-accent/5"
-                    )}
-                    onClick={selectable ? () => toggleSelect(skill.id) : undefined}
-                  >
-                    {isMultiSelect && !alreadyExists && (
-                      isSelected
-                        ? <SquareCheck className="h-3.5 w-3.5 shrink-0 text-accent" />
-                        : <Square className="h-3.5 w-3.5 shrink-0 text-faint" />
-                    )}
-                    <div className="flex-1 min-w-0">
-                      <div className="text-[13px] font-medium text-primary truncate">
-                        {skill.name}
-                      </div>
-                      {skill.description && (
-                        <div className="text-[12px] text-muted truncate mt-0.5">
-                          {skill.description}
-                        </div>
-                      )}
-                    </div>
-                    {alreadyExists ? (
-                      <span className="rounded-full bg-surface-hover px-2 py-0.5 text-[12px] font-medium text-muted shrink-0">
-                        {t("project.alreadyExists")}
-                      </span>
-                    ) : !isMultiSelect && (
-                      <button
-                        onClick={() => handleExport(skill)}
-                        disabled={exporting === skill.id}
-                        className="shrink-0 rounded px-3 py-1 text-[13px] font-medium text-accent-light transition-colors hover:bg-accent-bg disabled:opacity-50 outline-none"
-                      >
-                        {exporting === skill.id ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                          t("project.import")
-                        )}
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>,
-    document.body
+      {docLoading ? (
+        <div className="mt-12 text-center text-[13px] text-muted">{t("common.loading")}</div>
+      ) : contentTab === "diff" ? (
+        docContent && centerDocContent ? (
+          <DocumentDiffViewer original={docContent} updated={centerDocContent} />
+        ) : centerDocLoading ? (
+          <div className="mt-12 text-center text-[13px] text-muted">{t("common.loading")}</div>
+        ) : (
+          <div className="mt-12 text-center text-[13px] text-muted">{t("mySkills.sourceDiffUnavailable")}</div>
+        )
+      ) : contentTab === "center" ? (
+        centerDocLoading ? (
+          <div className="mt-12 text-center text-[13px] text-muted">{t("common.loading")}</div>
+        ) : centerDocContent ? (
+          <SkillMarkdown content={centerDocContent} />
+        ) : (
+          <div className="mt-12 text-center text-[13px] text-muted">{t("mySkills.sourceDiffUnavailable")}</div>
+        )
+      ) : docContent ? (
+        <SkillMarkdown content={docContent} />
+      ) : (
+        <div className="mt-12 text-center text-[13px] text-muted">{t("common.documentMissing")}</div>
+      )}
+    </DetailSheet>
   );
 }

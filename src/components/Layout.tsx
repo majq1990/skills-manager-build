@@ -1,6 +1,8 @@
-import { Outlet } from "react-router-dom";
+import { useEffect } from "react";
+import { Outlet, useNavigate } from "react-router-dom";
 import { Sidebar } from "./Sidebar";
 import { StatusBanner } from "./StatusBanner";
+import { CommandPalette } from "./CommandPalette";
 import { useApp } from "../context/AppContext";
 import { useTranslation } from "react-i18next";
 import { useDragWindow } from "../hooks/useDragWindow";
@@ -9,9 +11,30 @@ export function Layout() {
   const { t } = useTranslation();
   const { appError, refreshAppData } = useApp();
   const onDrag = useDragWindow();
+  const navigate = useNavigate();
+
+  // Cmd+, to open Settings
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === ",") {
+        const target = e.target as HTMLElement;
+        if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
+        e.preventDefault();
+        navigate("/settings");
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "r") {
+        const target = e.target as HTMLElement;
+        if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
+        e.preventDefault();
+        refreshAppData();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [navigate, refreshAppData]);
 
   return (
-    <div className="relative flex h-screen w-full overflow-hidden bg-background text-primary">
+    <div className="relative flex h-full w-full overflow-hidden bg-background text-primary">
       {/* Full-width top drag bar — spans sidebar + content, with bottom divider */}
       <div
         onMouseDown={onDrag}
@@ -35,6 +58,7 @@ export function Layout() {
           </div>
         </div>
       </div>
+      <CommandPalette />
     </div>
   );
 }

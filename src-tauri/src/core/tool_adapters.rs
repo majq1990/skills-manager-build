@@ -2,6 +2,18 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+/// Top-level grouping for sidebar/overview display. Does not affect skill
+/// deployment, sync, or any other backend behavior — purely a UI taxonomy.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ToolCategory {
+    /// Coding agents (Claude Code, Cursor, Codex, etc.). The default.
+    #[default]
+    Coding,
+    /// Lobster-class personal AI assistants (OpenClaw ecosystem, Hermes Agent).
+    Lobster,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ToolAdapter {
     pub key: String,
@@ -18,6 +30,20 @@ pub struct ToolAdapter {
     /// Whether this is a user-defined custom agent (not built-in).
     #[serde(default)]
     pub is_custom: bool,
+    /// When true, scan the skills directory recursively for skill directories
+    /// (directories containing SKILL.md) instead of treating immediate children as skills.
+    /// Used by tools with nested category directories (e.g., Hermes Agent).
+    #[serde(default)]
+    pub recursive_scan: bool,
+    /// Optional override for the project-level skills path. When `None`, the
+    /// project-level path falls back to `relative_skills_dir`. Used by tools
+    /// like OpenCode where the global path (`~/.config/opencode/skills`)
+    /// differs from the project path (`.opencode/skills`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_relative_skills_dir: Option<String>,
+    /// UI grouping. See [`ToolCategory`].
+    #[serde(default)]
+    pub category: ToolCategory,
 }
 
 /// Serializable custom tool definition stored in settings.
@@ -26,6 +52,10 @@ pub struct CustomToolDef {
     pub key: String,
     pub display_name: String,
     pub skills_dir: String,
+    #[serde(default)]
+    pub project_relative_skills_dir: Option<String>,
+    #[serde(default)]
+    pub category: ToolCategory,
 }
 
 impl ToolAdapter {
@@ -64,9 +94,28 @@ impl ToolAdapter {
         Self::select_existing_or_default(&candidates)
     }
 
+    /// Project-relative skills path used when scanning workspaces. Falls back
+    /// to `relative_skills_dir` when no project-specific override is set.
+    pub fn project_relative_skills_dir(&self) -> &str {
+        self.project_relative_skills_dir
+            .as_deref()
+            .unwrap_or(&self.relative_skills_dir)
+    }
+
     /// Returns all directories to scan for skills: the primary skills_dir plus any additional scan dirs.
     pub fn all_scan_dirs(&self) -> Vec<PathBuf> {
         let mut dirs = vec![self.skills_dir()];
+        for c in self.additional_existing_scan_dirs() {
+            if !dirs.contains(&c) {
+                dirs.push(c);
+            }
+        }
+        dirs
+    }
+
+    /// Returns the existing additional discovery roots for this adapter.
+    pub fn additional_existing_scan_dirs(&self) -> Vec<PathBuf> {
+        let mut dirs = Vec::new();
         for rel in &self.additional_scan_dirs {
             let candidates = Self::candidate_paths(rel);
             for c in candidates {
@@ -93,6 +142,24 @@ impl ToolAdapter {
     pub fn has_path_override(&self) -> bool {
         self.override_skills_dir.is_some()
     }
+
+    /// Deploy a materialized memory into this tool's skills dir using the
+    /// resolved adapter strategy (symlink, plugin, or copy).
+    pub fn deploy_materialized_memory(
+        &self,
+        memory: &crate::core::memory::materializer::MaterializedMemory,
+    ) -> anyhow::Result<()> {
+        let adapter = crate::core::memory::adapters::resolve(self);
+        let dir = self.skills_dir();
+        adapter.deploy(memory, &dir)
+    }
+
+    /// Remove a previously deployed memory skill from this tool.
+    pub fn remove_skill(&self, skill_name: &str) -> anyhow::Result<()> {
+        let adapter = crate::core::memory::adapters::resolve(self);
+        let dir = self.skills_dir();
+        adapter.remove(skill_name, &dir)
+    }
 }
 
 pub fn default_tool_adapters() -> Vec<ToolAdapter> {
@@ -104,58 +171,69 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             relative_detect_dir: ".cursor".into(),
             additional_scan_dirs: vec![],
             override_skills_dir: None,
+            category: ToolCategory::Coding,
             is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
         },
         ToolAdapter {
             key: "claude_code".into(),
             display_name: "Claude Code".into(),
             relative_skills_dir: ".claude/skills".into(),
             relative_detect_dir: ".claude".into(),
-            additional_scan_dirs: vec![
-                ".claude/plugins/cache".into(),
-                ".claude/plugins/marketplaces".into(),
-            ],
+            additional_scan_dirs: vec![],
             override_skills_dir: None,
+            category: ToolCategory::Coding,
             is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
         },
         ToolAdapter {
+            // Codex CLI reads user-level skills from `~/.codex/skills/` and
+            // project-level skills from `<repo>/.codex/skills/`. The shared
+            // `~/.agents/skills` location is kept as a discovery fallback so
+            // skills synced there by other adapters (or by older skills-manager
+            // versions that deployed Codex there by mistake) still surface in
+            // the Codex tab.
+            //
+            // Note: `AGENT_SKILLS_PATH` (openai/codex#13074) is a proposed
+            // env var that would let Codex load from `<custom>/.agents/skills`;
+            // until it ships, `.codex/skills` is the only path Codex CLI
+            // actually reads.
             key: "codex".into(),
             display_name: "Codex".into(),
             relative_skills_dir: ".codex/skills".into(),
             relative_detect_dir: ".codex".into(),
-            additional_scan_dirs: vec![],
+            additional_scan_dirs: vec![".agents/skills".into()],
             override_skills_dir: None,
+            category: ToolCategory::Coding,
             is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
         },
         ToolAdapter {
             key: "opencode".into(),
             display_name: "OpenCode".into(),
-            // On Windows opencode reads %APPDATA%\opencode\skills (Roaming).
-            // The Unix-style `.config/opencode/skills` is kept as a scan dir
-            // so previously-deployed skills there still surface in discovery.
-            #[cfg(target_os = "windows")]
-            relative_skills_dir: "AppData/Roaming/opencode/skills".into(),
-            #[cfg(not(target_os = "windows"))]
             relative_skills_dir: ".config/opencode/skills".into(),
-            #[cfg(target_os = "windows")]
-            relative_detect_dir: "AppData/Roaming/opencode".into(),
-            #[cfg(not(target_os = "windows"))]
             relative_detect_dir: ".config/opencode".into(),
-            #[cfg(target_os = "windows")]
-            additional_scan_dirs: vec![".config/opencode/skills".into()],
-            #[cfg(not(target_os = "windows"))]
             additional_scan_dirs: vec![],
             override_skills_dir: None,
+            category: ToolCategory::Coding,
             is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: Some(".opencode/skills".into()),
         },
         ToolAdapter {
             key: "antigravity".into(),
             display_name: "Antigravity".into(),
-            relative_skills_dir: ".gemini/antigravity/global_skills".into(),
+            relative_skills_dir: ".gemini/antigravity/skills".into(),
             relative_detect_dir: ".gemini/antigravity".into(),
             additional_scan_dirs: vec![],
             override_skills_dir: None,
+            category: ToolCategory::Coding,
             is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
         },
         ToolAdapter {
             key: "amp".into(),
@@ -164,7 +242,10 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             relative_detect_dir: ".config/agents".into(),
             additional_scan_dirs: vec![],
             override_skills_dir: None,
+            category: ToolCategory::Coding,
             is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
         },
         ToolAdapter {
             key: "kilo_code".into(),
@@ -173,7 +254,10 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             relative_detect_dir: ".kilocode".into(),
             additional_scan_dirs: vec![],
             override_skills_dir: None,
+            category: ToolCategory::Coding,
             is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
         },
         ToolAdapter {
             key: "roo_code".into(),
@@ -182,7 +266,10 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             relative_detect_dir: ".roo".into(),
             additional_scan_dirs: vec![],
             override_skills_dir: None,
+            category: ToolCategory::Coding,
             is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
         },
         ToolAdapter {
             key: "goose".into(),
@@ -191,7 +278,10 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             relative_detect_dir: ".config/goose".into(),
             additional_scan_dirs: vec![],
             override_skills_dir: None,
+            category: ToolCategory::Coding,
             is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
         },
         ToolAdapter {
             key: "gemini_cli".into(),
@@ -200,16 +290,23 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             relative_detect_dir: ".gemini".into(),
             additional_scan_dirs: vec![],
             override_skills_dir: None,
+            category: ToolCategory::Coding,
             is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
         },
         ToolAdapter {
             key: "github_copilot".into(),
             display_name: "GitHub Copilot".into(),
             relative_skills_dir: ".copilot/skills".into(),
             relative_detect_dir: ".copilot".into(),
-            additional_scan_dirs: vec![],
+            // GitHub Copilot now reads skills from the unified `~/.agents/skills` location too.
+            additional_scan_dirs: vec![".agents/skills".into()],
             override_skills_dir: None,
+            category: ToolCategory::Coding,
             is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
         },
         ToolAdapter {
             key: "openclaw".into(),
@@ -218,7 +315,10 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             relative_detect_dir: ".openclaw".into(),
             additional_scan_dirs: vec![],
             override_skills_dir: None,
+            category: ToolCategory::Lobster,
             is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
         },
         ToolAdapter {
             key: "droid".into(),
@@ -227,7 +327,10 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             relative_detect_dir: ".factory".into(),
             additional_scan_dirs: vec![],
             override_skills_dir: None,
+            category: ToolCategory::Coding,
             is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
         },
         ToolAdapter {
             key: "windsurf".into(),
@@ -236,7 +339,10 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             relative_detect_dir: ".codeium/windsurf".into(),
             additional_scan_dirs: vec![],
             override_skills_dir: None,
+            category: ToolCategory::Coding,
             is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
         },
         ToolAdapter {
             key: "trae".into(),
@@ -245,16 +351,418 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             relative_detect_dir: ".trae".into(),
             additional_scan_dirs: vec![],
             override_skills_dir: None,
+            category: ToolCategory::Coding,
             is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
+        },
+        ToolAdapter {
+            key: "cline".into(),
+            display_name: "Cline".into(),
+            relative_skills_dir: ".agents/skills".into(),
+            relative_detect_dir: ".cline".into(),
+            additional_scan_dirs: vec![],
+            override_skills_dir: None,
+            category: ToolCategory::Coding,
+            is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
+        },
+        ToolAdapter {
+            key: "deepagents".into(),
+            display_name: "Deep Agents".into(),
+            relative_skills_dir: ".deepagents/agent/skills".into(),
+            relative_detect_dir: ".deepagents".into(),
+            additional_scan_dirs: vec![],
+            override_skills_dir: None,
+            category: ToolCategory::Coding,
+            is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
+        },
+        ToolAdapter {
+            key: "firebender".into(),
+            display_name: "Firebender".into(),
+            relative_skills_dir: ".firebender/skills".into(),
+            relative_detect_dir: ".firebender".into(),
+            additional_scan_dirs: vec![],
+            override_skills_dir: None,
+            category: ToolCategory::Coding,
+            is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
+        },
+        ToolAdapter {
+            key: "kimi".into(),
+            display_name: "Kimi Code CLI".into(),
+            relative_skills_dir: ".config/agents/skills".into(),
+            relative_detect_dir: ".kimi".into(),
+            additional_scan_dirs: vec![],
+            override_skills_dir: None,
+            category: ToolCategory::Coding,
+            is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
+        },
+        ToolAdapter {
+            key: "replit".into(),
+            display_name: "Replit".into(),
+            relative_skills_dir: ".config/agents/skills".into(),
+            relative_detect_dir: ".replit".into(),
+            additional_scan_dirs: vec![],
+            override_skills_dir: None,
+            category: ToolCategory::Coding,
+            is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
+        },
+        ToolAdapter {
+            key: "warp".into(),
+            display_name: "Warp".into(),
+            relative_skills_dir: ".agents/skills".into(),
+            relative_detect_dir: ".warp".into(),
+            additional_scan_dirs: vec![],
+            override_skills_dir: None,
+            category: ToolCategory::Coding,
+            is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
+        },
+        ToolAdapter {
+            key: "augment".into(),
+            display_name: "Augment".into(),
+            relative_skills_dir: ".augment/skills".into(),
+            relative_detect_dir: ".augment".into(),
+            additional_scan_dirs: vec![],
+            override_skills_dir: None,
+            category: ToolCategory::Coding,
+            is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
+        },
+        ToolAdapter {
+            key: "bob".into(),
+            display_name: "IBM Bob".into(),
+            relative_skills_dir: ".bob/skills".into(),
+            relative_detect_dir: ".bob".into(),
+            additional_scan_dirs: vec![],
+            override_skills_dir: None,
+            category: ToolCategory::Coding,
+            is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
+        },
+        ToolAdapter {
+            key: "codebuddy".into(),
+            display_name: "CodeBuddy".into(),
+            relative_skills_dir: ".codebuddy/skills".into(),
+            relative_detect_dir: ".codebuddy".into(),
+            additional_scan_dirs: vec![],
+            override_skills_dir: None,
+            category: ToolCategory::Coding,
+            is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
+        },
+        ToolAdapter {
+            key: "command_code".into(),
+            display_name: "Command Code".into(),
+            relative_skills_dir: ".commandcode/skills".into(),
+            relative_detect_dir: ".commandcode".into(),
+            additional_scan_dirs: vec![],
+            override_skills_dir: None,
+            category: ToolCategory::Coding,
+            is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
+        },
+        ToolAdapter {
+            key: "continue".into(),
+            display_name: "Continue".into(),
+            relative_skills_dir: ".continue/skills".into(),
+            relative_detect_dir: ".continue".into(),
+            additional_scan_dirs: vec![],
+            override_skills_dir: None,
+            category: ToolCategory::Coding,
+            is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
+        },
+        ToolAdapter {
+            key: "cortex".into(),
+            display_name: "Cortex Code".into(),
+            relative_skills_dir: ".snowflake/cortex/skills".into(),
+            relative_detect_dir: ".snowflake/cortex".into(),
+            additional_scan_dirs: vec![],
+            override_skills_dir: None,
+            category: ToolCategory::Coding,
+            is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
+        },
+        ToolAdapter {
+            key: "crush".into(),
+            display_name: "Crush".into(),
+            relative_skills_dir: ".config/crush/skills".into(),
+            relative_detect_dir: ".config/crush".into(),
+            additional_scan_dirs: vec![],
+            override_skills_dir: None,
+            category: ToolCategory::Coding,
+            is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
+        },
+        ToolAdapter {
+            key: "iflow".into(),
+            display_name: "iFlow CLI".into(),
+            relative_skills_dir: ".iflow/skills".into(),
+            relative_detect_dir: ".iflow".into(),
+            additional_scan_dirs: vec![],
+            override_skills_dir: None,
+            category: ToolCategory::Coding,
+            is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
+        },
+        ToolAdapter {
+            key: "junie".into(),
+            display_name: "Junie".into(),
+            relative_skills_dir: ".junie/skills".into(),
+            relative_detect_dir: ".junie".into(),
+            additional_scan_dirs: vec![],
+            override_skills_dir: None,
+            category: ToolCategory::Coding,
+            is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
+        },
+        ToolAdapter {
+            key: "kiro".into(),
+            display_name: "Kiro CLI".into(),
+            relative_skills_dir: ".kiro/skills".into(),
+            relative_detect_dir: ".kiro".into(),
+            additional_scan_dirs: vec![],
+            override_skills_dir: None,
+            category: ToolCategory::Coding,
+            is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
+        },
+        ToolAdapter {
+            key: "kode".into(),
+            display_name: "Kode".into(),
+            relative_skills_dir: ".kode/skills".into(),
+            relative_detect_dir: ".kode".into(),
+            additional_scan_dirs: vec![],
+            override_skills_dir: None,
+            category: ToolCategory::Coding,
+            is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
+        },
+        ToolAdapter {
+            key: "mcpjam".into(),
+            display_name: "MCPJam".into(),
+            relative_skills_dir: ".mcpjam/skills".into(),
+            relative_detect_dir: ".mcpjam".into(),
+            additional_scan_dirs: vec![],
+            override_skills_dir: None,
+            category: ToolCategory::Coding,
+            is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
+        },
+        ToolAdapter {
+            key: "mistral_vibe".into(),
+            display_name: "Mistral Vibe".into(),
+            relative_skills_dir: ".vibe/skills".into(),
+            relative_detect_dir: ".vibe".into(),
+            additional_scan_dirs: vec![],
+            override_skills_dir: None,
+            category: ToolCategory::Coding,
+            is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
+        },
+        ToolAdapter {
+            key: "mux".into(),
+            display_name: "Mux".into(),
+            relative_skills_dir: ".mux/skills".into(),
+            relative_detect_dir: ".mux".into(),
+            additional_scan_dirs: vec![],
+            override_skills_dir: None,
+            category: ToolCategory::Coding,
+            is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
+        },
+        ToolAdapter {
+            key: "neovate".into(),
+            display_name: "Neovate".into(),
+            relative_skills_dir: ".neovate/skills".into(),
+            relative_detect_dir: ".neovate".into(),
+            additional_scan_dirs: vec![],
+            override_skills_dir: None,
+            category: ToolCategory::Coding,
+            is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
+        },
+        ToolAdapter {
+            key: "openhands".into(),
+            display_name: "OpenHands".into(),
+            relative_skills_dir: ".openhands/skills".into(),
+            relative_detect_dir: ".openhands".into(),
+            additional_scan_dirs: vec![],
+            override_skills_dir: None,
+            category: ToolCategory::Coding,
+            is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
+        },
+        ToolAdapter {
+            key: "pi".into(),
+            display_name: "Pi".into(),
+            relative_skills_dir: ".pi/agent/skills".into(),
+            relative_detect_dir: ".pi/agent".into(),
+            additional_scan_dirs: vec![],
+            override_skills_dir: None,
+            category: ToolCategory::Coding,
+            is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
+        },
+        ToolAdapter {
+            key: "pochi".into(),
+            display_name: "Pochi".into(),
+            relative_skills_dir: ".pochi/skills".into(),
+            relative_detect_dir: ".pochi".into(),
+            additional_scan_dirs: vec![],
+            override_skills_dir: None,
+            category: ToolCategory::Coding,
+            is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
+        },
+        ToolAdapter {
+            key: "qoder".into(),
+            display_name: "Qoder".into(),
+            relative_skills_dir: ".qoder/skills".into(),
+            relative_detect_dir: ".qoder".into(),
+            additional_scan_dirs: vec![],
+            override_skills_dir: None,
+            category: ToolCategory::Coding,
+            is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
+        },
+        ToolAdapter {
+            key: "qwen_code".into(),
+            display_name: "Qwen Code".into(),
+            relative_skills_dir: ".qwen/skills".into(),
+            relative_detect_dir: ".qwen".into(),
+            additional_scan_dirs: vec![],
+            override_skills_dir: None,
+            category: ToolCategory::Coding,
+            is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
+        },
+        ToolAdapter {
+            key: "trae_cn".into(),
+            display_name: "TRAE CN".into(),
+            relative_skills_dir: ".trae-cn/skills".into(),
+            relative_detect_dir: ".trae-cn".into(),
+            additional_scan_dirs: vec![],
+            override_skills_dir: None,
+            category: ToolCategory::Coding,
+            is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
+        },
+        ToolAdapter {
+            key: "zencoder".into(),
+            display_name: "Zencoder".into(),
+            relative_skills_dir: ".zencoder/skills".into(),
+            relative_detect_dir: ".zencoder".into(),
+            additional_scan_dirs: vec![],
+            override_skills_dir: None,
+            category: ToolCategory::Coding,
+            is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
+        },
+        ToolAdapter {
+            key: "adal".into(),
+            display_name: "AdaL".into(),
+            relative_skills_dir: ".adal/skills".into(),
+            relative_detect_dir: ".adal".into(),
+            additional_scan_dirs: vec![],
+            override_skills_dir: None,
+            category: ToolCategory::Coding,
+            is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
+        },
+        ToolAdapter {
+            key: "hermes".into(),
+            display_name: "Hermes Agent".into(),
+            relative_skills_dir: ".hermes/skills".into(),
+            relative_detect_dir: ".hermes".into(),
+            additional_scan_dirs: vec![],
+            override_skills_dir: None,
+            category: ToolCategory::Lobster,
+            is_custom: false,
+            recursive_scan: true,
+            project_relative_skills_dir: None,
+        },
+        ToolAdapter {
+            key: "qclaw".into(),
+            display_name: "QClaw".into(),
+            relative_skills_dir: ".qclaw/skills".into(),
+            relative_detect_dir: ".qclaw".into(),
+            additional_scan_dirs: vec![],
+            override_skills_dir: None,
+            category: ToolCategory::Lobster,
+            is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
+        },
+        ToolAdapter {
+            key: "easyclaw".into(),
+            display_name: "EasyClaw".into(),
+            relative_skills_dir: ".easyclaw/skills".into(),
+            relative_detect_dir: ".easyclaw".into(),
+            additional_scan_dirs: vec![],
+            override_skills_dir: None,
+            category: ToolCategory::Lobster,
+            is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
+        },
+        ToolAdapter {
+            key: "autoclaw".into(),
+            display_name: "AutoClaw".into(),
+            relative_skills_dir: ".openclaw-autoclaw/skills".into(),
+            relative_detect_dir: ".openclaw-autoclaw".into(),
+            additional_scan_dirs: vec![],
+            override_skills_dir: None,
+            category: ToolCategory::Lobster,
+            is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
         },
         ToolAdapter {
             key: "workbuddy".into(),
             display_name: "WorkBuddy".into(),
-            relative_skills_dir: ".workbuddy/skills".into(),
+            relative_skills_dir: ".workbuddy/skills-marketplace/skills".into(),
             relative_detect_dir: ".workbuddy".into(),
-            additional_scan_dirs: vec![".workbuddy/automations".into()],
+            additional_scan_dirs: vec![],
             override_skills_dir: None,
+            category: ToolCategory::Lobster,
             is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
         },
     ]
 }
@@ -298,11 +806,14 @@ pub fn all_tool_adapters(store: &crate::core::skill_store::SkillStore) -> Vec<To
         adapters.push(ToolAdapter {
             key: ct.key,
             display_name: ct.display_name,
-            relative_skills_dir: String::new(),
+            relative_skills_dir: ct.project_relative_skills_dir.unwrap_or_default(),
             relative_detect_dir: String::new(),
             additional_scan_dirs: vec![],
             override_skills_dir: Some(ct.skills_dir),
+            category: ct.category,
             is_custom: true,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
         });
     }
 
@@ -332,11 +843,14 @@ pub fn find_adapter_with_store(
         .map(|ct| ToolAdapter {
             key: ct.key,
             display_name: ct.display_name,
-            relative_skills_dir: String::new(),
+            relative_skills_dir: ct.project_relative_skills_dir.unwrap_or_default(),
             relative_detect_dir: String::new(),
             additional_scan_dirs: vec![],
             override_skills_dir: Some(ct.skills_dir),
+            category: ct.category,
             is_custom: true,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
         })
 }
 
@@ -354,4 +868,42 @@ pub fn enabled_installed_adapters(
         .into_iter()
         .filter(|a| a.is_installed() && !disabled.contains(&a.key))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::default_tool_adapters;
+
+    #[test]
+    fn antigravity_uses_current_default_skills_path() {
+        let adapter = default_tool_adapters()
+            .into_iter()
+            .find(|adapter| adapter.key == "antigravity")
+            .expect("antigravity adapter should exist");
+
+        assert_eq!(adapter.relative_skills_dir, ".gemini/antigravity/skills");
+    }
+
+    #[test]
+    fn claude_code_does_not_scan_plugin_marketplaces_by_default() {
+        let adapter = default_tool_adapters()
+            .into_iter()
+            .find(|adapter| adapter.key == "claude_code")
+            .expect("claude_code adapter should exist");
+
+        assert!(adapter.additional_scan_dirs.is_empty());
+    }
+
+    #[test]
+    fn opencode_uses_distinct_project_and_global_skill_paths() {
+        let adapter = default_tool_adapters()
+            .into_iter()
+            .find(|adapter| adapter.key == "opencode")
+            .expect("opencode adapter should exist");
+
+        // Global path under home: ~/.config/opencode/skills
+        assert_eq!(adapter.relative_skills_dir, ".config/opencode/skills");
+        // Project path under workspace: .opencode/skills
+        assert_eq!(adapter.project_relative_skills_dir(), ".opencode/skills");
+    }
 }

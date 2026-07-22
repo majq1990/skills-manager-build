@@ -1,542 +1,233 @@
-use std::sync::Arc;
-use tauri::State;
+use std::sync::Mutex;
 
 use crate::core::{
-    central_repo,
+    enterprise_api::{EnterpriseApi, EnterpriseSkill, FrontendLoginResponse, UploadResponse},
     error::AppError,
-    enterprise_api::{
-        EnterpriseApi, EnterpriseSkill, EnterpriseSkillDetail, ScanStatusResponse,
-        ScanTriggerResponse, UploadResponse, VersionInfo,
-    },
-    enterprise_auth::{EnterpriseAuth, LoginResponse},
-    installer,
     skill_packer,
-    skill_store::{SkillRecord, SkillStore},
 };
 
-#[derive(serde::Serialize)]
-pub struct AuthStatus {
-    pub authenticated: bool,
-    pub username: Option<String>,
-    pub department: Option<String>,
-    pub is_support_dept: bool,
+/// Global enterprise API instance (protected by Mutex for thread safety)
+static ENTERPRISE_API: Mutex<Option<EnterpriseApi>> = Mutex::new(None);
+
+/// Default enterprise server URL
+const DEFAULT_ENTERPRISE_URL: &str = "https://demo.egova.com.cn/skill-api";
+
+fn get_or_create_api() -> std::sync::MutexGuard<'static, Option<EnterpriseApi>> {
+    let mut api = ENTERPRISE_API.lock().unwrap();
+    if api.is_none() {
+        *api = Some(EnterpriseApi::new(DEFAULT_ENTERPRISE_URL));
+    }
+    api
+}
+
+/// 拉服务端企业 skill 列表，返回 name -> 最新版本 映射（供自动更新比较）。
+pub(crate) fn fetch_enterprise_versions() -> Result<std::collections::HashMap<String, String>, AppError> {
+    let api_guard = get_or_create_api();
+    let api = api_guard.as_ref().unwrap();
+    if api.get_token().is_none() {
+        return Err(AppError::internal("Not authenticated"));
+    }
+    let skills = api
+        .list_skills()
+        .map_err(|e| AppError::internal(format!("Failed to list enterprise skills: {}", e)))?;
+    Ok(skills.into_iter().map(|s| (s.name, s.version)).collect())
+}
+
+/// 从 app 资源目录部署 feedback-monitor 插件到已安装 agent；失败只记日志。
+pub(crate) fn deploy_feedback_from_app(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    match app.path().resource_dir() {
+        Ok(rd) => {
+            let bundle = crate::core::feedback_deploy::resource_bundle(&rd);
+            match crate::core::feedback_deploy::deploy(&bundle) {
+                Ok(agents) => log::info!("feedback-monitor 部署到: {:?}", agents),
+                Err(e) => log::warn!("feedback-monitor 部署失败: {e}"),
+            }
+        }
+        Err(e) => log::warn!("resource_dir 解析失败，跳过 feedback-monitor 部署: {e}"),
+    }
 }
 
 #[tauri::command]
 pub async fn enterprise_login(
+    app: tauri::AppHandle,
+    store: tauri::State<'_, std::sync::Arc<crate::core::skill_store::SkillStore>>,
     username: String,
     password: String,
-    store: State<'_, Arc<SkillStore>>,
-) -> Result<LoginResponse, AppError> {
-    let store = store.inner().clone();
-    let server_url = store
-        .get_setting("enterprise_server_url")
-        .map_err(|e| AppError::internal(format!("Failed to read settings: {}", e)))?
-        .unwrap_or_else(|| "https://demo.egova.com.cn/skill-api/".to_string());
-    let auth = EnterpriseAuth::new();
-    auth.login(&store, &server_url, &username, &password)
-        .await
-        .map_err(|e| AppError::network(e.to_string()))
-}
-
-#[tauri::command]
-pub async fn enterprise_logout(store: State<'_, Arc<SkillStore>>) -> Result<(), AppError> {
-    let store = store.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        EnterpriseAuth::logout(&store).map_err(AppError::db)
-    })
-    .await?
-}
-
-#[tauri::command]
-pub async fn enterprise_get_auth(
-    store: State<'_, Arc<SkillStore>>,
-) -> Result<AuthStatus, AppError> {
-    let store = store.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let auth = EnterpriseAuth::get_valid_auth(&store, true).map_err(AppError::db)?;
-        Ok(match auth {
-            Some(stored) => AuthStatus {
-                authenticated: true,
-                username: Some(stored.user.username),
-                department: Some(stored.user.department),
-                is_support_dept: stored.user.is_support_dept,
-            },
-            None => AuthStatus {
-                authenticated: false,
-                username: None,
-                department: None,
-                is_support_dept: false,
-            },
-        })
-    })
-    .await?
-}
-
-#[tauri::command]
-pub async fn enterprise_check_auth(store: State<'_, Arc<SkillStore>>) -> Result<bool, AppError> {
-    let store = store.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        EnterpriseAuth::is_authenticated(&store).map_err(AppError::db)
-    })
-    .await?
-}
-
-#[tauri::command]
-pub async fn enterprise_is_support_dept(
-    store: State<'_, Arc<SkillStore>>,
-) -> Result<bool, AppError> {
-    let store = store.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        EnterpriseAuth::is_support_dept(&store).map_err(AppError::db)
-    })
-    .await?
-}
-
-#[tauri::command]
-pub async fn enterprise_list_skills(
-    store: State<'_, Arc<SkillStore>>,
-) -> Result<Vec<EnterpriseSkill>, AppError> {
-    let store = store.inner().clone();
-    // Clone store early for use later
-    let store_for_list = store.clone();
-
-    let auth = tauri::async_runtime::spawn_blocking(move || {
-        EnterpriseAuth::get_valid_auth(&store, true).map_err(AppError::db)
-    })
-    .await??;
-
-    match auth {
-        Some(stored) => {
-            let api = EnterpriseApi::new();
-            let skills = api.list_skills(&stored.server_url, &stored.token)
-                .await
-                .map_err(|e| AppError::network(e.to_string()))?;
-
-            // Get installed skill names from local database
-            let installed_skills: Vec<String> = tauri::async_runtime::spawn_blocking(move || {
-                match store_for_list.get_all_skills() {
-                    Ok(skills) => skills.into_iter().map(|s| s.name).collect::<Vec<String>>(),
-                    Err(_) => vec![],
-                }
-            })
-            .await
-            .unwrap_or_default();
-
-            // Mark skills as installed if they exist locally
-            let skills_with_install_status: Vec<EnterpriseSkill> = skills
-                .into_iter()
-                .map(|mut skill| {
-                    skill.installed = installed_skills.contains(&skill.name);
-                    skill
-                })
-                .collect();
-
-            Ok(skills_with_install_status)
-        }
-        None => Err(AppError::unauthorized("Not authenticated")),
-    }
-}
-
-#[tauri::command]
-pub async fn enterprise_get_skill(
-    name: String,
-    store: State<'_, Arc<SkillStore>>,
-) -> Result<EnterpriseSkillDetail, AppError> {
-    let store = store.inner().clone();
-
-    let auth = tauri::async_runtime::spawn_blocking(move || {
-        EnterpriseAuth::get_valid_auth(&store, true).map_err(AppError::db)
-    })
-    .await??;
-
-    match auth {
-        Some(stored) => {
-            let api = EnterpriseApi::new();
-            api.get_skill(&stored.server_url, &stored.token, &name)
-                .await
-                .map_err(|e| AppError::network(e.to_string()))
-        }
-        None => Err(AppError::unauthorized("Not authenticated")),
-    }
-}
-
-#[tauri::command]
-pub async fn enterprise_download_skill(
-    name: String,
-    store: State<'_, Arc<SkillStore>>,
-) -> Result<Vec<u8>, AppError> {
-    let store = store.inner().clone();
-
-    let auth = tauri::async_runtime::spawn_blocking(move || {
-        EnterpriseAuth::get_valid_auth(&store, true).map_err(AppError::db)
-    })
-    .await??;
-
-    match auth {
-        Some(stored) => {
-            let api = EnterpriseApi::new();
-            api.download_skill(&stored.server_url, &stored.token, &name)
-                .await
-                .map_err(|e| AppError::network(e.to_string()))
-        }
-        None => Err(AppError::unauthorized("Not authenticated")),
-    }
-}
-
-#[tauri::command]
-pub async fn enterprise_install_skill(
-    name: String,
-    store: State<'_, Arc<SkillStore>>,
-) -> Result<String, AppError> {
-    log::info!("[enterprise_install_skill] Starting installation for skill: {}", name);
-
-    let store = store.inner().clone();
-    // Clone store early for use in the install closure
-    let store_for_install = store.clone();
-
-    let auth = tauri::async_runtime::spawn_blocking(move || {
-        EnterpriseAuth::get_valid_auth(&store, true).map_err(AppError::db)
-    })
-    .await??;
-
-    let auth = match auth {
-        Some(stored) => stored,
-        None => {
-            log::error!("[enterprise_install_skill] Not authenticated");
-            return Err(AppError::unauthorized("Not authenticated"));
-        }
+) -> Result<FrontendLoginResponse, AppError> {
+    let resp = {
+        let mut api_guard = get_or_create_api();
+        let api = api_guard.as_mut().unwrap();
+        api.login(&username, &password)
+            .map_err(|e| AppError::internal(format!("Enterprise login failed: {}", e)))?
     };
 
-    // Capture the currently active scenario so the newly installed skill can be
-    // immediately enabled within it (matches the behavior of install_local/install_git).
-    let store_for_scenario = store_for_install.clone();
-    let active_scenario_id = tauri::async_runtime::spawn_blocking(move || {
-        store_for_scenario
-            .get_active_scenario_id()
-            .map_err(AppError::db)
-    })
-    .await??;
+    // 登录成功后：①把 JWT 投递给各 agent 的 token 文件；②联动部署插件到已装 agent；
+    // ③后台自动更新已装的企业 skill（有 token 才能拉/下载）。均失败不影响登录本身。
+    if resp.success {
+        crate::core::feedback_token::write_token(&resp.token);
+        deploy_feedback_from_app(&app);
 
-    log::info!(
-        "[enterprise_install_skill] Downloading skill from: {} (active_scenario={:?})",
-        auth.server_url,
-        active_scenario_id
-    );
-
-    let api = EnterpriseApi::new();
-    let zip_bytes = api
-        .download_skill(&auth.server_url, &auth.token, &name)
-        .await
-        .map_err(|e| {
-            log::error!("[enterprise_install_skill] Download failed: {}", e);
-            AppError::network(format!("Download failed: {}", e))
-        })?;
-
-    log::info!("[enterprise_install_skill] Downloaded {} bytes", zip_bytes.len());
-
-    // Verify zip file magic bytes
-    if zip_bytes.len() < 4 {
-        log::error!("[enterprise_install_skill] Downloaded file too small: {} bytes", zip_bytes.len());
-        return Err(AppError::internal("Downloaded file is too small or empty"));
+        let store = store.inner().clone();
+        let app_bg = app.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            crate::commands::skills::auto_update_enterprise_skills(&store, &app_bg);
+        });
     }
 
-    // Check for ZIP magic number (PK\x03\x04)
-    if zip_bytes[0] != 0x50 || zip_bytes[1] != 0x4B || zip_bytes[2] != 0x03 || zip_bytes[3] != 0x04 {
-        // Check for empty response or HTML error page
-        let preview = String::from_utf8_lossy(&zip_bytes[..zip_bytes.len().min(100)]);
-        log::error!("[enterprise_install_skill] Downloaded file is not a valid ZIP. Preview: {}", preview);
-        return Err(AppError::internal(format!("Downloaded file is not a valid ZIP archive. Preview: {}", preview)));
-    }
-
-    // Install to central repo
-    let skills_dir = central_repo::skills_dir();
-    log::info!("[enterprise_install_skill] Installing to: {:?}", skills_dir);
-
-    let install_result = tauri::async_runtime::spawn_blocking(move || {
-        log::info!("[enterprise_install_skill] Starting install in spawn_blocking");
-
-        let temp_dir = tempfile::tempdir().map_err(|e| {
-            log::error!("[enterprise_install_skill] Failed to create temp dir: {}", e);
-            AppError::io(e)
-        })?;
-        let zip_path = temp_dir.path().join("skill.zip");
-
-        log::info!("[enterprise_install_skill] Writing zip to: {:?}", zip_path);
-        std::fs::write(&zip_path, &zip_bytes).map_err(|e| {
-            log::error!("[enterprise_install_skill] Failed to write zip: {}", e);
-            AppError::io(e)
-        })?;
-
-        // Verify file was written
-        let written_size = std::fs::metadata(&zip_path)
-            .map(|m| m.len())
-            .unwrap_or(0);
-        log::info!("[enterprise_install_skill] Written {} bytes to disk", written_size);
-
-        log::info!("[enterprise_install_skill] Extracting zip: {:?}", zip_path);
-        let result = installer::install_from_local(&zip_path, Some(&name))
-            .map_err(|e| {
-                log::error!("[enterprise_install_skill] Install failed: {}", e);
-                AppError::internal(format!("Install failed: {}", e))
-            })?;
-
-        log::info!("[enterprise_install_skill] Successfully installed: {}, central_path: {:?}", result.name, result.central_path);
-
-        // Insert skill record to database
-        let now = chrono::Utc::now().timestamp_millis();
-        let skill_id = uuid::Uuid::new_v4().to_string();
-        let central_path_str = result.central_path.to_string_lossy().to_string();
-
-        log::info!("[enterprise_install_skill] Preparing skill record: id={}, name={}, source_type=enterprise, central_path={}",
-            skill_id, result.name, central_path_str);
-
-        let record = SkillRecord {
-            id: skill_id.clone(),
-            name: result.name.clone(),
-            description: result.description.clone(),
-            source_type: "enterprise".to_string(),
-            source_ref: Some(name.clone()),
-            source_ref_resolved: None,
-            source_subpath: None,
-            source_branch: None,
-            source_revision: None,
-            remote_revision: None,
-            central_path: central_path_str,
-            content_hash: Some(result.content_hash.clone()),
-            enabled: true,
-            created_at: now,
-            updated_at: now,
-            status: "ok".to_string(),
-            update_status: "unknown".to_string(),
-            last_checked_at: Some(now),
-            last_check_error: None,
-        };
-
-        log::info!("[enterprise_install_skill] Inserting skill record to database...");
-        match store_for_install.insert_skill(&record) {
-            Ok(_) => {
-                log::info!("[enterprise_install_skill] Skill record inserted successfully: {}", skill_id);
-            }
-            Err(e) => {
-                log::error!("[enterprise_install_skill] Failed to insert skill record: {}", e);
-                return Err(AppError::db(e));
-            }
-        }
-
-        // Attach the newly installed skill to the currently active scenario and
-        // sync it to every enabled agent tool, so it shows up under "当前场景已
-        // 启用" in My Skills and inside tool folders (e.g. ~/.claude/skills) right away.
-        if let Some(scenario_id) = active_scenario_id.as_deref() {
-            if let Err(e) = store_for_install.add_skill_to_scenario(scenario_id, &skill_id) {
-                log::warn!(
-                    "[enterprise_install_skill] Failed to add skill {} to active scenario {}: {}",
-                    skill_id, scenario_id, e
-                );
-            } else {
-                log::info!(
-                    "[enterprise_install_skill] Added skill {} to active scenario {}",
-                    skill_id, scenario_id
-                );
-                if let Err(e) = crate::commands::scenarios::sync_skill_to_scenario_active_tools(
-                    &store_for_install,
-                    scenario_id,
-                    &skill_id,
-                ) {
-                    log::warn!(
-                        "[enterprise_install_skill] sync_skill_to_scenario_active_tools failed for {}: {}",
-                        skill_id, e
-                    );
-                }
-            }
-        }
-
-        Ok(result.name)
-    })
-    .await;
-
-    match install_result {
-        Ok(Ok(name)) => {
-            log::info!("[enterprise_install_skill] Install completed successfully: {}", name);
-            Ok(name)
-        }
-        Ok(Err(e)) => {
-            log::error!("[enterprise_install_skill] Install failed: {}", e);
-            Err(e)
-        }
-        Err(e) => {
-            log::error!("[enterprise_install_skill] Task failed: {}", e);
-            Err(AppError::internal(format!("Task failed: {}", e)))
-        }
-    }
+    Ok(EnterpriseApi::map_login_response(resp))
 }
 
-// ── Upload / Scan / History commands ──
+#[tauri::command]
+pub async fn enterprise_list_skills() -> Result<Vec<EnterpriseSkill>, AppError> {
+    let api_guard = get_or_create_api();
+    let api = api_guard.as_ref().unwrap();
 
+    api.list_skills()
+        .map_err(|e| AppError::internal(format!("Failed to list enterprise skills: {}", e)))
+}
+
+#[tauri::command]
+pub async fn enterprise_get_tags() -> Result<Vec<String>, AppError> {
+    let api_guard = get_or_create_api();
+    let api = api_guard.as_ref().unwrap();
+
+    api.get_tags()
+        .map_err(|e| AppError::internal(format!("Failed to get enterprise tags: {}", e)))
+}
+
+#[tauri::command]
+pub async fn enterprise_search_by_tag(tag: String) -> Result<Vec<EnterpriseSkill>, AppError> {
+    let api_guard = get_or_create_api();
+    let api = api_guard.as_ref().unwrap();
+
+    api.search_by_tag(&tag)
+        .map_err(|e| AppError::internal(format!("Failed to search by tag: {}", e)))
+}
+
+#[tauri::command]
+pub async fn enterprise_search_by_query(query: String) -> Result<Vec<EnterpriseSkill>, AppError> {
+    let api_guard = get_or_create_api();
+    let api = api_guard.as_ref().unwrap();
+
+    api.search_by_query(&query)
+        .map_err(|e| AppError::internal(format!("Failed to search enterprise skills: {}", e)))
+}
+
+#[tauri::command]
+pub async fn enterprise_is_authenticated() -> Result<bool, AppError> {
+    let api_guard = get_or_create_api();
+    let api = api_guard.as_ref().unwrap();
+
+    Ok(api.get_token().is_some())
+}
+
+#[tauri::command]
+pub async fn enterprise_logout() -> Result<(), AppError> {
+    let mut api_guard = get_or_create_api();
+    let api = api_guard.as_mut().unwrap();
+
+    api.set_token(String::new());
+    crate::core::feedback_token::clear_token();
+    Ok(())
+}
+
+/// 把 feedback-monitor 插件联动部署到已安装的 agent（opencode/Claude Code/WorkBuddy）。
+/// bundle_src = feedback-monitor bundle 目录（后续由 app 资源目录提供；现阶段由调用方传入）。
+/// 返回已部署的 agent key 列表。
+#[tauri::command]
+pub async fn feedback_deploy_plugin(
+    app: tauri::AppHandle,
+    bundle_src: Option<String>,
+) -> Result<Vec<String>, AppError> {
+    let bundle = match bundle_src {
+        Some(s) => std::path::PathBuf::from(s),
+        None => {
+            use tauri::Manager;
+            let rd = app
+                .path()
+                .resource_dir()
+                .map_err(|e| AppError::internal(format!("resource_dir 解析失败: {}", e)))?;
+            crate::core::feedback_deploy::resource_bundle(&rd)
+        }
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::core::feedback_deploy::deploy(&bundle)
+            .map_err(|e| AppError::internal(format!("Feedback plugin deploy failed: {}", e)))
+    })
+    .await?
+}
+
+#[tauri::command]
+pub async fn enterprise_submit_feedback(
+    feedback_type: String,
+    skill: String,
+    title: String,
+    description: String,
+) -> Result<(), AppError> {
+    let api_guard = get_or_create_api();
+    let api = api_guard.as_ref().unwrap();
+    if api.get_token().is_none() {
+        return Err(AppError::internal("Not authenticated"));
+    }
+    api.submit_feedback(&feedback_type, &skill, &title, &description)
+        .map_err(|e| AppError::internal(format!("Submit feedback failed: {}", e)))
+}
+
+/// 用当前登录态（全局 ENTERPRISE_API 内存 token）下载企业技能 zip 字节。
+/// 同步函数，必须在 spawn_blocking 内调用（reqwest::blocking + std Mutex）。
+/// 安装命令 `enterprise_install_skill` 在 skills.rs，复用本地安装 helper。
+pub fn download_enterprise_zip(name: &str, version: &str) -> Result<Vec<u8>, AppError> {
+    let api_guard = get_or_create_api();
+    let api = api_guard.as_ref().unwrap();
+    if api.get_token().is_none() {
+        return Err(AppError::internal("Not authenticated"));
+    }
+    api.download_skill(name, version)
+        .map_err(|e| AppError::internal(format!("Download failed: {}", e)))
+}
+
+/// 同步打包 central_path 目录内容为 zip 并上传到企业服务器。
+/// 必须在 spawn_blocking 内调用（pack 走 std::fs，upload 走 reqwest::blocking + std Mutex）。
+fn pack_and_upload(
+    name: &str,
+    central_path: &str,
+    version: Option<&str>,
+    visibility: Option<&str>,
+) -> Result<UploadResponse, AppError> {
+    let zip_bytes = skill_packer::pack_dir(std::path::Path::new(central_path))
+        .map_err(|e| AppError::internal(format!("Failed to package skill: {}", e)))?;
+
+    let api_guard = get_or_create_api();
+    let api = api_guard.as_ref().unwrap();
+    if api.get_token().is_none() {
+        return Err(AppError::internal("Not authenticated"));
+    }
+    api.upload_skill(name, zip_bytes, version, visibility)
+        .map_err(|e| AppError::internal(format!("Upload failed: {}", e)))
+}
+
+/// 把本地技能（central_path 目录内容）打包上传/发布到企业服务器。
+/// 服务端做安全扫描：不过返回 HTTP 400，错误信息会一并带出。
+/// version 留空 = 服务端自动递增。
 #[tauri::command]
 pub async fn enterprise_upload_skill(
-    skill_id: String,
+    name: String,
+    central_path: String,
     version: Option<String>,
-    category: Option<String>,
-    store: State<'_, Arc<SkillStore>>,
+    visibility: Option<String>,
 ) -> Result<UploadResponse, AppError> {
-    let store = store.inner().clone();
-    let store_for_auth = store.clone();
-
-    let skill = tauri::async_runtime::spawn_blocking({
-        let store = store.clone();
-        let skill_id = skill_id.clone();
-        move || {
-            store
-                .get_skill_by_id(&skill_id)
-                .map_err(AppError::db)?
-                .ok_or_else(|| AppError::not_found(format!("Skill {} not found", skill_id)))
+    // 上传前先检查登录态（无 token 直接报错，避免白白打包）。
+    {
+        let api_guard = get_or_create_api();
+        let api = api_guard.as_ref().unwrap();
+        if api.get_token().is_none() {
+            return Err(AppError::internal("Not authenticated"));
         }
-    })
-    .await??;
-
-    let is_support = tauri::async_runtime::spawn_blocking({
-        let store = store_for_auth.clone();
-        move || EnterpriseAuth::is_support_dept(&store).map_err(AppError::db)
-    })
-    .await??;
-
-    if !is_support {
-        return Err(AppError::unauthorized("Only support department can upload skills"));
     }
 
-    let auth = tauri::async_runtime::spawn_blocking({
-        let store = store_for_auth.clone();
-        move || EnterpriseAuth::get_valid_auth(&store, true).map_err(AppError::db)
+    tauri::async_runtime::spawn_blocking(move || {
+        pack_and_upload(&name, &central_path, version.as_deref(), visibility.as_deref())
     })
-    .await??
-    .ok_or_else(|| AppError::unauthorized("Not authenticated"))?;
-
-    let central_path = std::path::PathBuf::from(&skill.central_path);
-    let zip_bytes = tauri::async_runtime::spawn_blocking(move || {
-        skill_packer::pack_skill(&central_path)
-            .map_err(|e| AppError::internal(format!("Pack failed: {}", e)))
-    })
-    .await??;
-
-    let api = EnterpriseApi::new();
-    api.upload_skill(
-        &auth.server_url,
-        &auth.token,
-        &skill.name,
-        zip_bytes,
-        version.as_deref(),
-        category.as_deref(),
-    )
-    .await
-    .map_err(|e| AppError::network(e.to_string()))
-}
-
-#[tauri::command]
-pub async fn enterprise_check_scan(
-    name: String,
-    version: String,
-    store: State<'_, Arc<SkillStore>>,
-) -> Result<ScanStatusResponse, AppError> {
-    let store = store.inner().clone();
-    let auth = tauri::async_runtime::spawn_blocking(move || {
-        EnterpriseAuth::get_valid_auth(&store, true).map_err(AppError::db)
-    })
-    .await??
-    .ok_or_else(|| AppError::unauthorized("Not authenticated"))?;
-
-    let api = EnterpriseApi::new();
-    api.get_scan_status(&auth.server_url, &auth.token, &name, &version)
-        .await
-        .map_err(|e| AppError::network(e.to_string()))
-}
-
-#[tauri::command]
-pub async fn enterprise_trigger_scan(
-    name: String,
-    version: String,
-    store: State<'_, Arc<SkillStore>>,
-) -> Result<ScanTriggerResponse, AppError> {
-    let store = store.inner().clone();
-    let auth = tauri::async_runtime::spawn_blocking(move || {
-        EnterpriseAuth::get_valid_auth(&store, true).map_err(AppError::db)
-    })
-    .await??
-    .ok_or_else(|| AppError::unauthorized("Not authenticated"))?;
-
-    let api = EnterpriseApi::new();
-    api.trigger_scan(&auth.server_url, &auth.token, &name, &version)
-        .await
-        .map_err(|e| AppError::network(e.to_string()))
-}
-
-#[tauri::command]
-pub async fn enterprise_upload_history(
-    name: String,
-    store: State<'_, Arc<SkillStore>>,
-) -> Result<Vec<VersionInfo>, AppError> {
-    let store = store.inner().clone();
-    let auth = tauri::async_runtime::spawn_blocking(move || {
-        EnterpriseAuth::get_valid_auth(&store, true).map_err(AppError::db)
-    })
-    .await??
-    .ok_or_else(|| AppError::unauthorized("Not authenticated"))?;
-
-    let api = EnterpriseApi::new();
-    api.get_upload_history(&auth.server_url, &auth.token, &name)
-        .await
-        .map_err(|e| AppError::network(e.to_string()))
-}
-
-#[tauri::command]
-pub async fn enterprise_get_tags(
-    store: State<'_, Arc<SkillStore>>,
-) -> Result<Vec<String>, AppError> {
-    let store = store.inner().clone();
-    let auth = tauri::async_runtime::spawn_blocking(move || {
-        EnterpriseAuth::get_valid_auth(&store, true).map_err(AppError::db)
-    })
-    .await??
-    .ok_or_else(|| AppError::unauthorized("Not authenticated"))?;
-
-    let api = EnterpriseApi::new();
-    api.get_tags(&auth.server_url, &auth.token)
-        .await
-        .map_err(|e| AppError::network(e.to_string()))
-}
-
-#[tauri::command]
-pub async fn enterprise_search_by_tag(
-    tag: String,
-    store: State<'_, Arc<SkillStore>>,
-) -> Result<Vec<EnterpriseSkill>, AppError> {
-    let store = store.inner().clone();
-    let auth = tauri::async_runtime::spawn_blocking(move || {
-        EnterpriseAuth::get_valid_auth(&store, true).map_err(AppError::db)
-    })
-    .await??
-    .ok_or_else(|| AppError::unauthorized("Not authenticated"))?;
-
-    let api = EnterpriseApi::new();
-    api.search_by_tag(&auth.server_url, &auth.token, &tag)
-        .await
-        .map_err(|e| AppError::network(e.to_string()))
-}
-
-#[tauri::command]
-pub async fn enterprise_search_by_query(
-    query: String,
-    store: State<'_, Arc<SkillStore>>,
-) -> Result<Vec<EnterpriseSkill>, AppError> {
-    let store = store.inner().clone();
-    let auth = tauri::async_runtime::spawn_blocking(move || {
-        EnterpriseAuth::get_valid_auth(&store, true).map_err(AppError::db)
-    })
-    .await??
-    .ok_or_else(|| AppError::unauthorized("Not authenticated"))?;
-
-    let api = EnterpriseApi::new();
-    api.search_by_query(&auth.server_url, &auth.token, &query)
-        .await
-        .map_err(|e| AppError::network(e.to_string()))
+    .await?
 }

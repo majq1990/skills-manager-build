@@ -1,15 +1,19 @@
-import { Trash2, CheckCircle2, Circle, Upload } from "lucide-react";
+import { Trash2, CheckCircle2, Circle, RotateCcw, Tag, Download, Upload, UploadCloud } from "lucide-react";
 import { cn } from "../utils";
 
 interface MultiSelectToolbarLabels {
   hint: string;
   selected: string;
+  update?: string;
+  updateProject?: string;
+  updateCenter?: string;
   delete: string;
   enable: string;
   disable: string;
   selectAll: string;
   deselectAll: string;
   cancel: string;
+  editTags?: string;
   publish?: string;
 }
 
@@ -17,13 +21,22 @@ interface MultiSelectToolbarProps {
   selectedCount: number;
   isAllSelected: boolean;
   anyDisabled: boolean;
+  anyUpdatable?: boolean;
+  anyCanUpdateProject?: boolean;
+  anyCanUpdateCenter?: boolean;
   showToggle: boolean;
-  canPublish?: boolean;
+  updating?: boolean;
+  updatingProject?: boolean;
+  updatingCenter?: boolean;
   labels: MultiSelectToolbarLabels;
+  onUpdate?: () => void;
+  onUpdateProject?: () => void;
+  onUpdateCenter?: () => void;
   onDelete: () => void;
   onToggle: () => void;
   onSelectAll: () => void;
   onCancel: () => void;
+  onEditTags?: () => void;
   onPublish?: () => void;
 }
 
@@ -31,13 +44,22 @@ export function MultiSelectToolbar({
   selectedCount,
   isAllSelected,
   anyDisabled,
+  anyUpdatable = false,
+  anyCanUpdateProject = false,
+  anyCanUpdateCenter = false,
   showToggle,
-  canPublish,
+  updating = false,
+  updatingProject = false,
+  updatingCenter = false,
   labels,
+  onUpdate,
+  onUpdateProject,
+  onUpdateCenter,
   onDelete,
   onToggle,
   onSelectAll,
   onCancel,
+  onEditTags,
   onPublish,
 }: MultiSelectToolbarProps) {
   return (
@@ -47,6 +69,54 @@ export function MultiSelectToolbar({
       </span>
       {selectedCount > 0 && (
         <>
+          {anyUpdatable && labels.update && onUpdate && (
+            <button
+              onClick={onUpdate}
+              disabled={updating}
+              className="inline-flex items-center gap-1.5 rounded-md bg-accent px-2.5 py-1 text-[13px] font-medium text-white transition-colors hover:opacity-90 disabled:opacity-50"
+            >
+              <RotateCcw className={cn("h-3.5 w-3.5", updating && "animate-spin")} />
+              {labels.update}
+            </button>
+          )}
+          {anyCanUpdateProject && labels.updateProject && onUpdateProject && (
+            <button
+              onClick={onUpdateProject}
+              disabled={updatingProject}
+              className="inline-flex items-center gap-1.5 rounded-md bg-sky-600/90 px-2.5 py-1 text-[13px] font-medium text-white hover:bg-sky-500 transition-colors disabled:opacity-50"
+            >
+              <Download className={cn("h-3.5 w-3.5", updatingProject && "animate-spin")} />
+              {labels.updateProject}
+            </button>
+          )}
+          {anyCanUpdateCenter && labels.updateCenter && onUpdateCenter && (
+            <button
+              onClick={onUpdateCenter}
+              disabled={updatingCenter}
+              className="inline-flex items-center gap-1.5 rounded-md bg-amber-600/90 px-2.5 py-1 text-[13px] font-medium text-white hover:bg-amber-500 transition-colors disabled:opacity-50"
+            >
+              <Upload className={cn("h-3.5 w-3.5", updatingCenter && "animate-spin")} />
+              {labels.updateCenter}
+            </button>
+          )}
+          {onEditTags && labels.editTags && (
+            <button
+              onClick={onEditTags}
+              className="inline-flex items-center gap-1.5 rounded-md bg-violet-600/90 px-2.5 py-1 text-[13px] font-medium text-white hover:bg-violet-500 transition-colors"
+            >
+              <Tag className="h-3.5 w-3.5" />
+              {labels.editTags}
+            </button>
+          )}
+          {onPublish && labels.publish && (
+            <button
+              onClick={onPublish}
+              className="inline-flex items-center gap-1.5 rounded-md bg-teal-600/90 px-2.5 py-1 text-[13px] font-medium text-white hover:bg-teal-500 transition-colors"
+            >
+              <UploadCloud className="h-3.5 w-3.5" />
+              {labels.publish}
+            </button>
+          )}
           <button
             onClick={onDelete}
             className="inline-flex items-center gap-1.5 rounded-md bg-red-600/90 px-2.5 py-1 text-[13px] font-medium text-white hover:bg-red-500 transition-colors"
@@ -68,15 +138,6 @@ export function MultiSelectToolbar({
                 ? <CheckCircle2 className="h-3.5 w-3.5" />
                 : <Circle className="h-3.5 w-3.5" />}
               {anyDisabled ? labels.enable : labels.disable}
-            </button>
-          )}
-          {canPublish && onPublish && labels.publish && (
-            <button
-              onClick={onPublish}
-              className="inline-flex items-center gap-1.5 rounded-md bg-accent-dark px-2.5 py-1 text-[13px] font-medium text-white hover:bg-accent transition-colors"
-            >
-              <Upload className="h-3.5 w-3.5" />
-              {labels.publish}
             </button>
           )}
         </>
