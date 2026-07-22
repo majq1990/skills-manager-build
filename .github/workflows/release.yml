@@ -15,16 +15,20 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: linux
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+            label: macOS-arm64
+          - platform: macos-latest
+            target: x86_64-apple-darwin
+            label: macOS-x64
+          - platform: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             label: Linux-x64
-            runs_on: '["self-hosted","Linux","X64","docker","tauri"]'
-          - os: windows
+          - platform: windows-latest
             target: x86_64-pc-windows-msvc
             label: Windows-x64
-            runs_on: '["self-hosted","Windows","X64","tauri"]'
 
-    runs-on: ${{ fromJSON(matrix.runs_on) }}
+    runs-on: ${{ matrix.platform }}
     name: Build (${{ matrix.label }})
 
     steps:
@@ -33,11 +37,32 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Linux system dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
       - name: Install frontend dependencies
         run: npm ci
 
       - name: Windows smoke check
-        if: matrix.os == 'windows'
+        if: matrix.platform == 'windows-latest'
         run: cargo check --manifest-path src-tauri/Cargo.toml
 
       - name: Extract changelog for current version
@@ -106,6 +131,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ startsWith(matrix.platform, 'macos') && '-' || '' }}
         with:
           tagName: v__VERSION__
           releaseName: 'Skills Manager v__VERSION__'
@@ -114,6 +140,13 @@ jobs:
           prerelease: false
           updaterJsonKeepUniversal: true
           args: --target ${{ matrix.target }}
+
+      - name: Verify macOS bundle signature
+        if: startsWith(matrix.platform, 'macos')
+        run: |
+          set -euo pipefail
+          APP_PATH="src-tauri/target/${{ matrix.target }}/release/bundle/macos/skills-manager.app"
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 
   verify-updater-assets:
     needs: build
