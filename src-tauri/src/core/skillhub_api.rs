@@ -227,10 +227,11 @@ impl SkillHubApi {
             return Err(anyhow::anyhow!("HTTP {}: {}", status, body));
         }
         let detail: DetailResp = response.json().context("Failed to parse skill detail")?;
-        let version = detail.latest_version.map(|v| v.version).filter(|v| !v.is_empty());
-        let author = detail
-            .owner
-            .and_then(|o| o.display_name.or(o.handle));
+        let version = detail
+            .latest_version
+            .map(|v| v.version)
+            .filter(|v| !v.is_empty());
+        let author = detail.owner.and_then(|o| o.display_name.or(o.handle));
         let tags = detail
             .skill
             .category

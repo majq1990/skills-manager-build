@@ -7,9 +7,9 @@ use crate::core::{
     gitee_api::{gitee_repo_to_domestic_mcp, GiteeApi},
     mcp_registry_api::{McpRegistryApi, McpServer},
     skill_store::SkillStore,
+    skillhub_api::{SkillHubApi, SkillHubSkill},
     skillsmp_api,
     skillssh_api::{self, LeaderboardType, SkillsShSkill},
-    skillhub_api::{SkillHubApi, SkillHubSkill},
 };
 
 const LEADERBOARD_CACHE_TTL: i64 = 300; // 5 minutes
@@ -162,7 +162,10 @@ pub async fn list_domestic_mcp_providers() -> Result<Vec<serde_json::Value>, App
 
 /// 跨市场搜索：在所有静态聚合数据中按关键词过滤
 #[tauri::command]
-pub async fn search_top_mcp(query: String, limit: Option<usize>) -> Result<Vec<DomesticMcpServer>, AppError> {
+pub async fn search_top_mcp(
+    query: String,
+    limit: Option<usize>,
+) -> Result<Vec<DomesticMcpServer>, AppError> {
     let take = limit.unwrap_or(50);
     let q = query.trim().to_lowercase();
     let mut all = if q.is_empty() {
@@ -177,7 +180,10 @@ pub async fn search_top_mcp(query: String, limit: Option<usize>) -> Result<Vec<D
 // ── Gitee Search (China) ──
 
 #[tauri::command]
-pub async fn search_gitee_skills(query: String, limit: Option<u32>) -> Result<Vec<DomesticMcpServer>, AppError> {
+pub async fn search_gitee_skills(
+    query: String,
+    limit: Option<u32>,
+) -> Result<Vec<DomesticMcpServer>, AppError> {
     tauri::async_runtime::spawn_blocking(move || {
         let api = GiteeApi::new();
         let repos = if query.trim().is_empty() {
@@ -187,7 +193,12 @@ pub async fn search_gitee_skills(query: String, limit: Option<u32>) -> Result<Ve
         };
 
         repos
-            .map(|repos| repos.iter().map(|r| gitee_repo_to_domestic_mcp(r)).collect())
+            .map(|repos| {
+                repos
+                    .iter()
+                    .map(|r| gitee_repo_to_domestic_mcp(r))
+                    .collect()
+            })
             .map_err(|e| AppError::network(e.to_string()))
     })
     .await?
@@ -198,7 +209,12 @@ pub async fn fetch_gitee_trending(limit: Option<u32>) -> Result<Vec<DomesticMcpS
     tauri::async_runtime::spawn_blocking(move || {
         let api = GiteeApi::new();
         api.get_trending(limit.unwrap_or(20))
-            .map(|repos| repos.iter().map(|r| gitee_repo_to_domestic_mcp(r)).collect())
+            .map(|repos| {
+                repos
+                    .iter()
+                    .map(|r| gitee_repo_to_domestic_mcp(r))
+                    .collect()
+            })
             .map_err(|e| AppError::network(e.to_string()))
     })
     .await?
@@ -227,7 +243,10 @@ fn agent_config_candidates() -> Vec<(String, std::path::PathBuf)> {
         let home = std::path::PathBuf::from(home);
         out.push(("Cursor".to_string(), home.join(".cursor").join("mcp.json")));
         out.push(("Claude Code".to_string(), home.join(".claude.json")));
-        out.push(("WorkBuddy".to_string(), home.join(".workbuddy").join("mcp.json")));
+        out.push((
+            "WorkBuddy".to_string(),
+            home.join(".workbuddy").join("mcp.json"),
+        ));
     }
     out
 }
@@ -327,10 +346,7 @@ pub async fn install_domestic_mcp_direct(
 }
 
 #[tauri::command]
-pub async fn install_domestic_mcp(
-    server_id: String,
-    provider: String,
-) -> Result<(), AppError> {
+pub async fn install_domestic_mcp(server_id: String, provider: String) -> Result<(), AppError> {
     // For domestic MCP servers, we open the URL in browser for manual installation
     // since they require specific setup per provider
     // 通用规则：先尝试在静态聚合表中找到对应 server，直接打开它的 url；
@@ -342,16 +358,33 @@ pub async fn install_domestic_mcp(
         found.url
     } else {
         match provider.as_str() {
-            "aliyun" => format!("https://bailian.console.aliyun.com/?spm=skill-{}", server_id),
-            "bytedance" => format!("https://console.volcengine.com/mcp/{}?ref=skills-manager", server_id),
-            "tencent" => format!("https://console.cloud.tencent.com/mcp/{}?ref=skills-manager", server_id),
-            "dingtalk" => format!("https://open.dingtalk.com/mcp/{}?ref=skills-manager", server_id),
+            "aliyun" => format!(
+                "https://bailian.console.aliyun.com/?spm=skill-{}",
+                server_id
+            ),
+            "bytedance" => format!(
+                "https://console.volcengine.com/mcp/{}?ref=skills-manager",
+                server_id
+            ),
+            "tencent" => format!(
+                "https://console.cloud.tencent.com/mcp/{}?ref=skills-manager",
+                server_id
+            ),
+            "dingtalk" => format!(
+                "https://open.dingtalk.com/mcp/{}?ref=skills-manager",
+                server_id
+            ),
             "mcpso" => "https://mcp.so/".to_string(),
             "modelscope" => "https://modelscope.cn/mcp".to_string(),
             "baidu" => "https://mcp.bce.baidu.com/".to_string(),
             "higress" => "https://mcp.higress.ai/".to_string(),
             "pulsemcp" => "https://www.pulsemcp.com/servers".to_string(),
-            _ => return Err(AppError::internal(format!("Unknown provider: {}", provider))),
+            _ => {
+                return Err(AppError::internal(format!(
+                    "Unknown provider: {}",
+                    provider
+                )))
+            }
         }
     };
 
@@ -366,9 +399,7 @@ pub async fn install_domestic_mcp(
 // ── Registry MCP Install ──
 
 #[tauri::command]
-pub async fn install_registry_mcp(
-    server_name: String,
-) -> Result<String, AppError> {
+pub async fn install_registry_mcp(server_name: String) -> Result<String, AppError> {
     // For registry MCP servers, we return the installation URL/command
     // which can be used by the client (Claude/Cursor/etc.)
     let install_config = format!(
@@ -400,9 +431,7 @@ pub async fn search_skillhub(
 }
 
 #[tauri::command]
-pub async fn list_skillhub_trending(
-    limit: Option<usize>,
-) -> Result<Vec<SkillHubSkill>, AppError> {
+pub async fn list_skillhub_trending(limit: Option<usize>) -> Result<Vec<SkillHubSkill>, AppError> {
     tauri::async_runtime::spawn_blocking(move || {
         let api = SkillHubApi::new();
         api.list_trending(limit.unwrap_or(30))
@@ -412,9 +441,7 @@ pub async fn list_skillhub_trending(
 }
 
 #[tauri::command]
-pub async fn get_skillhub_skill(
-    skill_id: String,
-) -> Result<SkillHubSkill, AppError> {
+pub async fn get_skillhub_skill(skill_id: String) -> Result<SkillHubSkill, AppError> {
     tauri::async_runtime::spawn_blocking(move || {
         let api = SkillHubApi::new();
         api.get_skill(&skill_id)
@@ -441,10 +468,9 @@ pub async fn install_skillhub_skill(
             .get_skill(&skill_id)
             .map_err(|e| AppError::network(format!("Failed to get skill info: {}", e)))?;
 
-        let version = skill_info
-            .version
-            .clone()
-            .ok_or_else(|| AppError::network("SkillHub skill has no resolvable version".to_string()))?;
+        let version = skill_info.version.clone().ok_or_else(|| {
+            AppError::network("SkillHub skill has no resolvable version".to_string())
+        })?;
 
         // skillhub.cn 无 zip 打包接口，逐文件物化到临时目录后按目录安装
         let temp_dir = tempfile::tempdir().map_err(AppError::io)?;

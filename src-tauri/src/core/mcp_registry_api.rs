@@ -65,11 +65,7 @@ impl McpRegistryApi {
     }
 
     /// List MCP servers from registry
-    pub fn list_servers(
-        &self,
-        page: u32,
-        per_page: u32,
-    ) -> Result<Vec<McpServer>> {
+    pub fn list_servers(&self, page: u32, per_page: u32) -> Result<Vec<McpServer>> {
         let url = format!(
             "https://registry.modelcontextprotocol.io/v0/servers?page={}&per_page={}",
             page, per_page

@@ -347,9 +347,12 @@ fn classify_diff_bytes(bytes: Option<Vec<u8>>) -> (&'static str, Option<String>)
 /// Diff the whole content scope of two skill directories. `original_dir` is
 /// the central copy (old), `updated_dir` is the source (new). Uses the same
 /// file enumeration as the hash so it reports exactly what flips the badge.
-fn build_source_diff_entries(original_dir: &Path, updated_dir: &Path) -> Vec<SkillSourceDiffEntryDto> {
-    use std::collections::BTreeMap;
+fn build_source_diff_entries(
+    original_dir: &Path,
+    updated_dir: &Path,
+) -> Vec<SkillSourceDiffEntryDto> {
     use crate::core::content_hash::{self, ContentEntry};
+    use std::collections::BTreeMap;
 
     let index = |dir: &Path| -> BTreeMap<String, ContentEntry> {
         content_hash::list_content_files(dir)
@@ -646,6 +649,32 @@ fn log_install_outcome(
     store.log_audit(draft);
 }
 
+fn log_install_many_outcome(
+    store: &SkillStore,
+    source_label: &str,
+    outcome: Result<&Vec<(String, String)>, &AppError>,
+) {
+    match outcome {
+        Ok(installed) => {
+            for (id, name) in installed {
+                store.log_audit(
+                    AuditDraft::new("install")
+                        .detail(source_label)
+                        .skill(id.clone(), name.clone())
+                        .ok(),
+                );
+            }
+        }
+        Err(e) => {
+            store.log_audit(
+                AuditDraft::new("install")
+                    .detail(source_label)
+                    .fail(e.to_string()),
+            );
+        }
+    }
+}
+
 fn log_update_outcome(
     store: &SkillStore,
     skill_id: &str,
@@ -708,7 +737,7 @@ pub async fn install_local(
 ) -> Result<(), AppError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let outcome = (|| -> Result<(String, String), AppError> {
+        let outcome = (|| -> Result<Vec<(String, String)>, AppError> {
             let path = PathBuf::from(&source_path);
             let active = store.get_active_scenario_id().ok().flatten();
             let metadata = InstallSourceMetadata {
@@ -722,14 +751,11 @@ pub async fn install_local(
                 update_status: "local_only".to_string(),
             };
             let _lock = RepoLock::acquire("install local skill").map_err(AppError::db)?;
-            let result =
-                installer::install_from_local(&path, name.as_deref()).map_err(AppError::io)?;
-            let skill_name = result.name.clone();
-            let skill_id =
-                store_installed_skill_unlocked(&store, &result, &metadata, active.as_deref())?;
-            Ok((skill_id, skill_name))
+            let results =
+                installer::install_all_from_local(&path, name.as_deref()).map_err(AppError::io)?;
+            store_install_results_unlocked(&store, &results, &metadata, active.as_deref())
         })();
-        log_install_outcome(&store, "local", outcome.as_ref());
+        log_install_many_outcome(&store, "local", outcome.as_ref());
         outcome.map(|_| ())
     })
     .await?
@@ -747,7 +773,7 @@ pub async fn enterprise_install_skill(
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let outcome = enterprise_install_inner(&store, &name, &version);
-        log_install_outcome(&store, "enterprise", outcome.as_ref());
+        log_install_many_outcome(&store, "enterprise", outcome.as_ref());
         outcome.map(|_| ())
     })
     .await??;
@@ -763,7 +789,7 @@ fn enterprise_install_inner(
     store: &Arc<SkillStore>,
     name: &str,
     version: &str,
-) -> Result<(String, String), AppError> {
+) -> Result<Vec<(String, String)>, AppError> {
     // 1. 下载企业技能 zip（全局 ENTERPRISE_API 内存 token）
     let zip_bytes = crate::commands::enterprise::download_enterprise_zip(name, version)?;
 
@@ -799,10 +825,8 @@ fn enterprise_install_inner(
         update_status: "unknown".to_string(),
     };
     let _lock = RepoLock::acquire("install enterprise skill").map_err(AppError::db)?;
-    let result = installer::install_from_local(&zip_path, Some(name)).map_err(AppError::io)?;
-    let skill_name = result.name.clone();
-    let skill_id = store_installed_skill_unlocked(store, &result, &metadata, active.as_deref())?;
-    Ok((skill_id, skill_name))
+    let results = installer::install_all_from_local(&zip_path, Some(name)).map_err(AppError::io)?;
+    store_install_results_unlocked(store, &results, &metadata, active.as_deref())
 }
 
 /// 语义化版本比较：a > b ？（按 . 分段数值比较，非数字段回退字符串）
@@ -843,16 +867,26 @@ pub(crate) fn auto_update_enterprise_skills(store: &Arc<SkillStore>, app: &tauri
         }
     };
     let mut updated = 0usize;
+    let mut processed_packages = std::collections::HashSet::new();
     for sk in skills.iter().filter(|s| s.source_type == "enterprise") {
-        let Some(server_ver) = latest.get(&sk.name) else {
+        let package_name = sk.source_ref.as_deref().unwrap_or(&sk.name);
+        if !processed_packages.insert(package_name.to_string()) {
+            continue;
+        }
+        let Some(server_ver) = latest.get(package_name) else {
             continue;
         };
         let installed = sk.source_revision.as_deref().unwrap_or("0.0.0");
         if version_gt(server_ver, installed) {
-            match enterprise_install_inner(store, &sk.name, server_ver) {
+            match enterprise_install_inner(store, package_name, server_ver) {
                 Ok(_) => {
                     updated += 1;
-                    log::info!("企业 skill 自动更新: {} {} -> {}", sk.name, installed, server_ver);
+                    log::info!(
+                        "企业 skill 自动更新: {} {} -> {}",
+                        sk.name,
+                        installed,
+                        server_ver
+                    );
                 }
                 Err(e) => log::warn!("企业 skill 自动更新失败 {}: {}", sk.name, e),
             }
@@ -939,12 +973,8 @@ pub async fn install_git(
                     update_status: "up_to_date".to_string(),
                 };
                 let skill_name = result.name.clone();
-                let skill_id = store_installed_skill_unlocked(
-                    &store,
-                    &result,
-                    &metadata,
-                    active.as_deref(),
-                )?;
+                let skill_id =
+                    store_installed_skill_unlocked(&store, &result, &metadata, active.as_deref())?;
                 Ok((skill_id, skill_name))
             })();
 
@@ -1043,12 +1073,8 @@ pub async fn install_from_skillssh(
                     update_status: "up_to_date".to_string(),
                 };
                 let skill_name = result.name.clone();
-                let new_id = store_installed_skill_unlocked(
-                    &store,
-                    &result,
-                    &metadata,
-                    active.as_deref(),
-                )?;
+                let new_id =
+                    store_installed_skill_unlocked(&store, &result, &metadata, active.as_deref())?;
                 Ok((new_id, skill_name))
             })();
 
@@ -1178,8 +1204,7 @@ pub async fn confirm_git_install(
             let all_dirs = collect_git_skill_dirs(&skill_dir);
             let revision = git_fetcher::get_head_revision(&temp_path).map_err(AppError::git)?;
             let active = store.get_active_scenario_id().ok().flatten();
-            let _lock = RepoLock::acquire("confirm git install")
-                .map_err(AppError::db)?;
+            let _lock = RepoLock::acquire("confirm git install").map_err(AppError::db)?;
 
             for dir in &all_dirs {
                 let rel_key = skill_rel_key(&skill_dir, dir);
@@ -1427,8 +1452,7 @@ pub async fn relink_local_skill_source(
             .map_err(AppError::db)?;
 
         let result = (|| -> Result<(), AppError> {
-            let _lock = RepoLock::acquire("relink local skill")
-                .map_err(AppError::db)?;
+            let _lock = RepoLock::acquire("relink local skill").map_err(AppError::db)?;
             let staged_path = staged_path_for(&skill.central_path);
             let install_result = installer::install_from_local_to_destination(
                 &path,
@@ -1488,8 +1512,7 @@ pub async fn detach_local_skill_source(
         }
 
         {
-            let _lock = RepoLock::acquire("detach local skill")
-                .map_err(AppError::db)?;
+            let _lock = RepoLock::acquire("detach local skill").map_err(AppError::db)?;
             store
                 .update_skill_after_reinstall(
                     &skill.id,
@@ -1571,7 +1594,10 @@ fn managed_skill_to_dto(
     }
 }
 
-pub fn managed_skill_by_id(store: &SkillStore, skill_id: &str) -> Result<ManagedSkillDto, AppError> {
+pub fn managed_skill_by_id(
+    store: &SkillStore,
+    skill_id: &str,
+) -> Result<ManagedSkillDto, AppError> {
     let skill = store
         .get_skill_by_id(skill_id)
         .map_err(AppError::db)?
@@ -1639,8 +1665,7 @@ pub fn update_git_skill_internal(
             crate::core::content_hash::hash_directory(&skill_dir).map_err(AppError::io)?;
         let content_changed = skill.content_hash.as_deref() != Some(new_hash.as_str());
         let source_subpath = git_fetcher::relative_subpath(&temp_dir, &skill_dir);
-        let _lock = RepoLock::acquire("update installed skill")
-            .map_err(AppError::db)?;
+        let _lock = RepoLock::acquire("update installed skill").map_err(AppError::db)?;
 
         if content_changed {
             let staged_path = staged_path_for(&skill.central_path);
@@ -1748,8 +1773,7 @@ pub fn reimport_local_skill_internal(
         .map_err(AppError::db)?;
 
     let result = (|| -> Result<(), AppError> {
-        let _lock = RepoLock::acquire("reimport local skill")
-            .map_err(AppError::db)?;
+        let _lock = RepoLock::acquire("reimport local skill").map_err(AppError::db)?;
         let staged_path = staged_path_for(&skill.central_path);
         let install_result =
             installer::install_from_local_to_destination(&path, Some(&skill.name), &staged_path)
@@ -1866,6 +1890,28 @@ pub fn store_installed_skill_unlocked(
     }
 
     Ok(id)
+}
+
+fn store_install_results_unlocked(
+    store: &SkillStore,
+    results: &[installer::InstallResult],
+    metadata: &InstallSourceMetadata,
+    active_scenario_id: Option<&str>,
+) -> Result<Vec<(String, String)>, AppError> {
+    let mut installed = Vec::new();
+
+    for result in results {
+        let mut item_metadata = metadata.clone();
+        if result.source_subpath.is_some() {
+            item_metadata.source_subpath = result.source_subpath.clone();
+        }
+        let skill_name = result.name.clone();
+        let skill_id =
+            store_installed_skill_unlocked(store, result, &item_metadata, active_scenario_id)?;
+        installed.push((skill_id, skill_name));
+    }
+
+    Ok(installed)
 }
 
 pub fn check_skill_update_internal(
@@ -2348,8 +2394,7 @@ pub async fn batch_import_folder(
             }
 
             let install_result = (|| -> Result<String, AppError> {
-                let _lock = RepoLock::acquire("batch import skill")
-                    .map_err(AppError::db)?;
+                let _lock = RepoLock::acquire("batch import skill").map_err(AppError::db)?;
                 let result =
                     installer::install_from_local(dir, Some(&name)).map_err(AppError::io)?;
                 let metadata = InstallSourceMetadata {
@@ -2525,7 +2570,11 @@ mod tests {
         let dir = root.join(rel);
         fs::create_dir_all(&dir).unwrap();
         let basename = dir.file_name().unwrap().to_string_lossy().to_string();
-        fs::write(dir.join("SKILL.md"), format!("---\nname: {basename}\n---\n")).unwrap();
+        fs::write(
+            dir.join("SKILL.md"),
+            format!("---\nname: {basename}\n---\n"),
+        )
+        .unwrap();
         dir
     }
 

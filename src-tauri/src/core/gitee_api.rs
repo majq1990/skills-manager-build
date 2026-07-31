@@ -126,7 +126,10 @@ pub fn gitee_repo_to_domestic_mcp(repo: &GiteeRepo) -> super::domestic_mcp_api::
     super::domestic_mcp_api::DomesticMcpServer {
         id: format!("gitee-{}", repo.id),
         name: repo.name.clone(),
-        description: repo.description.clone().unwrap_or_else(|| "No description".to_string()),
+        description: repo
+            .description
+            .clone()
+            .unwrap_or_else(|| "No description".to_string()),
         provider: super::domestic_mcp_api::McpProvider::Gitee,
         url: repo.html_url.clone(),
         category: repo.language.clone().unwrap_or_else(|| "Skill".to_string()),

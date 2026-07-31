@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.24.1] - 2026-07-31
+
+### Added
+- Added multi-skill package installation for local ZIP imports and enterprise downloads. A single package can now discover and install multiple child skills independently.
+- Persisted each child skill's package-relative `source_subpath` while retaining the enterprise package name as its update source.
+
+### Fixed
+- Enterprise auto-update now resolves bundled child skills through their shared package source and processes each package only once.
+- Increased enterprise package upload and download timeouts to five minutes so larger multi-skill archives can complete.
+- Expanded enterprise download errors with the underlying connection, TLS, or timeout cause.
+- Preserved nested `SKILL.md` files inside a valid parent skill instead of incorrectly splitting them into separate installations.
+
 ## [1.24.0] - 2026-07-22
 
 ### Added

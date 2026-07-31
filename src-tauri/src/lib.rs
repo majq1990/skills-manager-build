@@ -98,12 +98,22 @@ fn request_quit(app: &tauri::AppHandle) {
 fn load_custom_tray_icon() -> Option<tauri::image::Image<'static>> {
     #[cfg(target_os = "windows")]
     {
-        log::info!("Loading custom tray icon from embedded ICO ({} bytes)", CUSTOM_TRAY_ICON_ICO_BYTES.len());
-        match image::load_from_memory_with_format(CUSTOM_TRAY_ICON_ICO_BYTES, image::ImageFormat::Ico) {
+        log::info!(
+            "Loading custom tray icon from embedded ICO ({} bytes)",
+            CUSTOM_TRAY_ICON_ICO_BYTES.len()
+        );
+        match image::load_from_memory_with_format(
+            CUSTOM_TRAY_ICON_ICO_BYTES,
+            image::ImageFormat::Ico,
+        ) {
             Ok(img) => {
                 let rgba = img.to_rgba8();
                 let (width, height) = rgba.dimensions();
-                log::info!("Tray icon loaded successfully from ICO: {}x{}", width, height);
+                log::info!(
+                    "Tray icon loaded successfully from ICO: {}x{}",
+                    width,
+                    height
+                );
                 return Some(tauri::image::Image::new_owned(
                     rgba.into_raw(),
                     width,
@@ -116,12 +126,19 @@ fn load_custom_tray_icon() -> Option<tauri::image::Image<'static>> {
         }
     }
 
-    log::info!("Loading custom tray icon from embedded PNG ({} bytes)", CUSTOM_TRAY_ICON_BYTES.len());
+    log::info!(
+        "Loading custom tray icon from embedded PNG ({} bytes)",
+        CUSTOM_TRAY_ICON_BYTES.len()
+    );
     match image::load_from_memory_with_format(CUSTOM_TRAY_ICON_BYTES, image::ImageFormat::Png) {
         Ok(img) => {
             let rgba = img.to_rgba8();
             let (width, height) = rgba.dimensions();
-            log::info!("Tray icon loaded successfully from PNG: {}x{}", width, height);
+            log::info!(
+                "Tray icon loaded successfully from PNG: {}x{}",
+                width,
+                height
+            );
             Some(tauri::image::Image::new_owned(
                 rgba.into_raw(),
                 width,
@@ -236,8 +253,16 @@ fn collect_tray_menu_data(store: &core::skill_store::SkillStore) -> TrayMenuData
 }
 
 fn format_status_line(data: &TrayMenuData) -> String {
-    let skill_label = if data.total_skills == 1 { "skill" } else { "skills" };
-    let agent_label = if data.coding_agent_count == 1 { "agent" } else { "agents" };
+    let skill_label = if data.total_skills == 1 {
+        "skill"
+    } else {
+        "skills"
+    };
+    let agent_label = if data.coding_agent_count == 1 {
+        "agent"
+    } else {
+        "agents"
+    };
     format!(
         "{} {} · {} {} connected",
         data.total_skills, skill_label, data.coding_agent_count, agent_label
@@ -271,7 +296,11 @@ fn preset_menu_item_id(preset: &TrayPresetEntry) -> (String, &'static str) {
 }
 
 fn preset_menu_label(preset: &TrayPresetEntry) -> String {
-    let unit = if preset.skill_count == 1 { "skill" } else { "skills" };
+    let unit = if preset.skill_count == 1 {
+        "skill"
+    } else {
+        "skills"
+    };
     match preset.status() {
         TrayPresetStatus::Active => format!("✓ {} ({} {unit})", preset.name, preset.skill_count),
         TrayPresetStatus::Partial => format!(
@@ -587,7 +616,9 @@ fn check_updates_from_tray<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
                 {
                     Ok(lock) => lock,
                     Err(err) => {
-                        log::warn!("Tray update check: failed to acquire repo lock for {skill_id}: {err}");
+                        log::warn!(
+                            "Tray update check: failed to acquire repo lock for {skill_id}: {err}"
+                        );
                         continue;
                     }
                 };
@@ -650,7 +681,8 @@ fn open_skills_folder_from_tray<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
 
         let status = cmd.arg(&repo_path).status();
         match status {
-            Ok(_status) => {
+            Ok(_status) =>
+            {
                 #[cfg(not(target_os = "windows"))]
                 if !_status.success() {
                     log::warn!(

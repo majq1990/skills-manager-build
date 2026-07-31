@@ -21,7 +21,8 @@ fn get_or_create_api() -> std::sync::MutexGuard<'static, Option<EnterpriseApi>> 
 }
 
 /// 拉服务端企业 skill 列表，返回 name -> 最新版本 映射（供自动更新比较）。
-pub(crate) fn fetch_enterprise_versions() -> Result<std::collections::HashMap<String, String>, AppError> {
+pub(crate) fn fetch_enterprise_versions(
+) -> Result<std::collections::HashMap<String, String>, AppError> {
     let api_guard = get_or_create_api();
     let api = api_guard.as_ref().unwrap();
     if api.get_token().is_none() {
@@ -184,7 +185,7 @@ pub fn download_enterprise_zip(name: &str, version: &str) -> Result<Vec<u8>, App
         return Err(AppError::internal("Not authenticated"));
     }
     api.download_skill(name, version)
-        .map_err(|e| AppError::internal(format!("Download failed: {}", e)))
+        .map_err(|e| AppError::internal(format!("Download failed: {e:#}")))
 }
 
 /// 同步打包 central_path 目录内容为 zip 并上传到企业服务器。
@@ -227,7 +228,12 @@ pub async fn enterprise_upload_skill(
     }
 
     tauri::async_runtime::spawn_blocking(move || {
-        pack_and_upload(&name, &central_path, version.as_deref(), visibility.as_deref())
+        pack_and_upload(
+            &name,
+            &central_path,
+            version.as_deref(),
+            visibility.as_deref(),
+        )
     })
     .await?
 }

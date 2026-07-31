@@ -1,6 +1,5 @@
 use anyhow::{bail, Context, Result};
 use std::path::{Path, PathBuf};
-use walkdir::WalkDir;
 
 use super::central_repo;
 use super::content_hash;
@@ -12,20 +11,28 @@ pub struct InstallResult {
     pub description: Option<String>,
     pub central_path: PathBuf,
     pub content_hash: String,
+    pub source_subpath: Option<String>,
 }
 
 enum PreparedSource {
-    Directory(PathBuf),
+    Directory {
+        root: PathBuf,
+        skill_dirs: Vec<PathBuf>,
+    },
     Archive {
         _temp_dir: tempfile::TempDir,
-        skill_dir: PathBuf,
+        root: PathBuf,
+        skill_dirs: Vec<PathBuf>,
     },
 }
 
 impl PreparedSource {
     fn open(source: &Path) -> Result<Self> {
         if source.is_dir() {
-            Ok(PreparedSource::Directory(source.to_path_buf()))
+            Ok(PreparedSource::Directory {
+                root: source.to_path_buf(),
+                skill_dirs: discover_skill_dirs(source)?,
+            })
         } else {
             Self::from_archive(source)
         }
@@ -44,43 +51,54 @@ impl PreparedSource {
         let file = std::fs::File::open(source)?;
         let mut archive = zip::ZipArchive::new(file)?;
         safe_extract(&mut archive, temp_dir.path())?;
-
-        // Find supported skill markers for local/archive import flows.
-        let mut found = Vec::new();
-        for entry in WalkDir::new(temp_dir.path()).max_depth(4) {
-            let entry = entry?;
-            let name = entry.file_name().to_string_lossy();
-            if name == "SKILL.md" || name == "skill.md" {
-                if let Some(parent) = entry.path().parent() {
-                    found.push(parent.to_path_buf());
-                }
-            }
-        }
-
-        found.dedup();
-
-        let skill_dir = match found.len() {
-            0 => temp_dir.path().to_path_buf(),
-            1 => found.into_iter().next().unwrap(),
-            _ => bail!("Multiple skill directories found in archive"),
-        };
+        let root = temp_dir.path().to_path_buf();
+        let skill_dirs = discover_skill_dirs(&root)?;
 
         Ok(PreparedSource::Archive {
             _temp_dir: temp_dir,
-            skill_dir,
+            root,
+            skill_dirs,
         })
     }
 
     fn skill_dir(&self) -> &Path {
+        self.skill_dirs()
+            .first()
+            .map(|p| p.as_path())
+            .unwrap_or_else(|| self.root())
+    }
+
+    fn root(&self) -> &Path {
         match self {
-            PreparedSource::Directory(p) => p,
-            PreparedSource::Archive { skill_dir, .. } => skill_dir,
+            PreparedSource::Directory { root, .. } => root,
+            PreparedSource::Archive { root, .. } => root,
+        }
+    }
+
+    fn skill_dirs(&self) -> &[PathBuf] {
+        match self {
+            PreparedSource::Directory { skill_dirs, .. } => skill_dirs,
+            PreparedSource::Archive { skill_dirs, .. } => skill_dirs,
+        }
+    }
+
+    fn source_subpath(&self, skill_dir: &Path) -> Option<String> {
+        let rel = skill_dir.strip_prefix(self.root()).ok()?;
+        if rel.as_os_str().is_empty() {
+            None
+        } else {
+            Some(rel.to_string_lossy().replace('\\', "/"))
         }
     }
 }
 
 pub fn install_from_local(source: &Path, name: Option<&str>) -> Result<InstallResult> {
     let prepared = PreparedSource::open(source)?;
+    if prepared.skill_dirs().len() > 1 {
+        bail!(
+            "Multiple skill directories found; use install_all_from_local for multi-skill packages"
+        );
+    }
     let skill_dir = prepared.skill_dir();
 
     let sanitized_name = match name {
@@ -97,7 +115,45 @@ pub fn install_from_local(source: &Path, name: Option<&str>) -> Result<InstallRe
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| sanitized_name.clone());
 
-    install_skill_dir_to_destination(skill_dir, &final_name, &dest)
+    let mut result = install_skill_dir_to_destination(skill_dir, &final_name, &dest)?;
+    result.source_subpath = prepared.source_subpath(skill_dir);
+    Ok(result)
+}
+
+pub fn install_all_from_local(source: &Path, name: Option<&str>) -> Result<Vec<InstallResult>> {
+    let prepared = PreparedSource::open(source)?;
+    let skill_dirs = if prepared.skill_dirs().is_empty() {
+        vec![prepared.root().to_path_buf()]
+    } else {
+        prepared.skill_dirs().to_vec()
+    };
+    let use_override_name = skill_dirs.len() == 1;
+    let skills_dir = central_repo::skills_dir();
+    let mut results = Vec::new();
+
+    for skill_dir in skill_dirs {
+        let sanitized_name = if use_override_name {
+            match name {
+                Some(n) if !n.is_empty() => sanitize_skill_name(n)
+                    .ok_or_else(|| anyhow::anyhow!("Invalid skill name: '{}'", n))?,
+                _ => skill_metadata::infer_skill_name(&skill_dir),
+            }
+        } else {
+            skill_metadata::infer_skill_name(&skill_dir)
+        };
+
+        let dest = unique_skill_dest(&skills_dir, &sanitized_name, &skill_dir)?;
+        let final_name = dest
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| sanitized_name.clone());
+
+        let mut result = install_skill_dir_to_destination(&skill_dir, &final_name, &dest)?;
+        result.source_subpath = prepared.source_subpath(&skill_dir);
+        results.push(result);
+    }
+
+    Ok(results)
 }
 
 pub fn install_from_local_to_destination(
@@ -161,7 +217,49 @@ pub fn install_skill_dir_to_destination(
         description: meta.description,
         central_path: destination.to_path_buf(),
         content_hash: hash,
+        source_subpath: None,
     })
+}
+
+fn discover_skill_dirs(root: &Path) -> Result<Vec<PathBuf>> {
+    if skill_metadata::is_valid_skill_dir(root) {
+        return Ok(vec![root.to_path_buf()]);
+    }
+
+    let mut found = Vec::new();
+    collect_skill_dirs(root, &mut found)?;
+    found.sort();
+    found.dedup();
+    Ok(found)
+}
+
+fn collect_skill_dirs(dir: &Path, found: &mut Vec<PathBuf>) -> Result<()> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(_) => return Ok(()),
+    };
+
+    for entry in entries {
+        let entry = entry?;
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name == ".git" || name == "node_modules" || name == ".hub" {
+            continue;
+        }
+
+        if skill_metadata::is_valid_skill_dir(&path) {
+            found.push(path);
+        } else {
+            collect_skill_dirs(&path, found)?;
+        }
+    }
+
+    Ok(())
 }
 
 /// Extract a ZIP archive into `dest`, skipping any entry whose path would
@@ -368,6 +466,15 @@ mod tests {
         zip.finish().unwrap();
     }
 
+    fn with_test_repo<T>(f: impl FnOnce() -> T) -> T {
+        let _lock = central_repo::test_base_dir_lock();
+        let tmp = tempdir().unwrap();
+        central_repo::set_test_base_dir_override(Some(tmp.path().join("repo")));
+        let result = f();
+        central_repo::set_test_base_dir_override(None);
+        result
+    }
+
     #[test]
     fn hash_local_source_matches_extracted_archive_representation() {
         let tmp = tempdir().unwrap();
@@ -396,5 +503,62 @@ mod tests {
         let second_hash = hash_local_source(&archive).unwrap();
 
         assert_ne!(first_hash, second_hash);
+    }
+
+    #[test]
+    fn install_all_from_archive_installs_multiple_skill_dirs() {
+        with_test_repo(|| {
+            let tmp = tempdir().unwrap();
+            let archive_path = tmp.path().join("bundle.zip");
+            let file = std::fs::File::create(&archive_path).unwrap();
+            let mut zip = zip::ZipWriter::new(file);
+            let options = SimpleFileOptions::default();
+
+            zip.start_file("category-a/alpha/SKILL.md", options)
+                .unwrap();
+            zip.write_all(b"---\nname: Alpha\n---\n").unwrap();
+            zip.start_file("category-a/alpha/references/a.md", options)
+                .unwrap();
+            zip.write_all(b"alpha ref").unwrap();
+            zip.start_file("category-b/beta/SKILL.md", options).unwrap();
+            zip.write_all(b"---\nname: Beta\n---\n").unwrap();
+            zip.finish().unwrap();
+
+            let results = install_all_from_local(&archive_path, Some("ignored")).unwrap();
+            let names: Vec<_> = results.iter().map(|r| r.name.as_str()).collect();
+
+            assert_eq!(results.len(), 2);
+            assert!(names.contains(&"Alpha"));
+            assert!(names.contains(&"Beta"));
+            assert!(results
+                .iter()
+                .any(|r| r.source_subpath.as_deref() == Some("category-a/alpha")));
+            assert!(results
+                .iter()
+                .any(|r| r.source_subpath.as_deref() == Some("category-b/beta")));
+        });
+    }
+
+    #[test]
+    fn install_all_from_archive_keeps_nested_skill_md_inside_single_skill() {
+        with_test_repo(|| {
+            let tmp = tempdir().unwrap();
+            let archive_path = tmp.path().join("nested.zip");
+            let file = std::fs::File::create(&archive_path).unwrap();
+            let mut zip = zip::ZipWriter::new(file);
+            let options = SimpleFileOptions::default();
+
+            zip.start_file("parent/SKILL.md", options).unwrap();
+            zip.write_all(b"---\nname: Parent\n---\n").unwrap();
+            zip.start_file("parent/child/SKILL.md", options).unwrap();
+            zip.write_all(b"---\nname: Child\n---\n").unwrap();
+            zip.finish().unwrap();
+
+            let results = install_all_from_local(&archive_path, None).unwrap();
+
+            assert_eq!(results.len(), 1);
+            assert_eq!(results[0].name, "Parent");
+            assert!(results[0].central_path.join("child/SKILL.md").exists());
+        });
     }
 }

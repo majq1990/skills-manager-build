@@ -95,6 +95,9 @@ pub struct EnterpriseApi {
 }
 
 impl EnterpriseApi {
+    const DEFAULT_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+    const PACKAGE_TRANSFER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+
     pub fn new(base_url: &str) -> Self {
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
@@ -110,12 +113,21 @@ impl EnterpriseApi {
         self.token.as_deref()
     }
 
-    fn build_client() -> reqwest::blocking::Client {
+    fn build_client_with_timeout(timeout: std::time::Duration) -> reqwest::blocking::Client {
         reqwest::blocking::Client::builder()
             .user_agent("skills-manager")
-            .timeout(std::time::Duration::from_secs(30))
+            .connect_timeout(std::time::Duration::from_secs(15))
+            .timeout(timeout)
             .build()
             .unwrap_or_default()
+    }
+
+    fn build_client() -> reqwest::blocking::Client {
+        Self::build_client_with_timeout(Self::DEFAULT_REQUEST_TIMEOUT)
+    }
+
+    fn build_package_client() -> reqwest::blocking::Client {
+        Self::build_client_with_timeout(Self::PACKAGE_TRANSFER_TIMEOUT)
     }
 
     pub fn login(&mut self, username: &str, password: &str) -> Result<LoginResponse> {
@@ -208,8 +220,7 @@ impl EnterpriseApi {
             anyhow::bail!("Failed to list skills ({}): {}", status, text);
         }
 
-        let skills_resp: SkillsResponse =
-            resp.json().context("Failed to parse skills response")?;
+        let skills_resp: SkillsResponse = resp.json().context("Failed to parse skills response")?;
 
         Ok(skills_resp.skills)
     }
@@ -255,8 +266,7 @@ impl EnterpriseApi {
             anyhow::bail!("Failed to search by tag ({}): {}", status, text);
         }
 
-        let skills_resp: SkillsResponse =
-            resp.json().context("Failed to parse search response")?;
+        let skills_resp: SkillsResponse = resp.json().context("Failed to parse search response")?;
 
         Ok(skills_resp.skills)
     }
@@ -281,8 +291,7 @@ impl EnterpriseApi {
             anyhow::bail!("Failed to search skills ({}): {}", status, text);
         }
 
-        let skills_resp: SkillsResponse =
-            resp.json().context("Failed to parse search response")?;
+        let skills_resp: SkillsResponse = resp.json().context("Failed to parse search response")?;
 
         Ok(skills_resp.skills)
     }
@@ -291,7 +300,7 @@ impl EnterpriseApi {
     /// name 可能含中文（如「定制图标生成器」），必须 URL 编码；服务端 express :name 自动 decode。
     /// 配合服务端 RFC 5987 Content-Disposition，中文名技能下载完整可用。
     pub fn download_skill(&self, name: &str, version: &str) -> Result<Vec<u8>> {
-        let client = Self::build_client();
+        let client = Self::build_package_client();
         let url = format!(
             "{}/skills/{}/{}/download",
             self.base_url,
@@ -303,7 +312,7 @@ impl EnterpriseApi {
             .get(&url)
             .header("Authorization", self.auth_header()?)
             .send()
-            .context("Failed to download skill")?;
+            .with_context(|| format!("Failed to download skill package '{}@{}'", name, version))?;
 
         if !resp.status().is_success() {
             let status = resp.status();
@@ -329,7 +338,7 @@ impl EnterpriseApi {
     ) -> Result<UploadResponse> {
         use reqwest::blocking::multipart::{Form, Part};
 
-        let client = Self::build_client();
+        let client = Self::build_package_client();
         let url = format!(
             "{}/skills/{}/upload",
             self.base_url,
