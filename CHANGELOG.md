@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.24.2] - 2026-08-10
+
+### Release Overview
+- Fixed the Windows enterprise auto-update flow so installation completes reliably.
+
+### User-facing
+- Automatically relaunches the client after a Windows update is installed.
+- Explicitly selects the NSIS updater package on Windows for silent installation.
+
+### Developer & Governance
+- Added the Tauri Process plugin required for post-install relaunch.
 ## [1.24.1] - 2026-07-31
 
 ### Added

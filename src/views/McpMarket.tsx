@@ -1,12 +1,12 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
-import { Search, Loader2, Globe, Server, ExternalLink, Building2, Check, Copy, Download } from "lucide-react";
+import { Search, Loader2, Globe, Server, ExternalLink, Building2, Check, Copy, Download, Package } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 import { cn } from "../utils";
 import * as api from "../lib/tauri";
-import type { DomesticMcpServer, McpServer, McpProvider } from "../lib/tauri";
+import type { DomesticMcpServer, McpServer, McpProvider, NpmMcpPackage } from "../lib/tauri";
 
-type Tab = "domestic" | "registry";
+type Tab = "domestic" | "registry" | "npm";
 type DomesticFilter =
   | "all"
   | "mcpso"
@@ -37,6 +37,11 @@ export function McpMarket() {
   const [registryServers, setRegistryServers] = useState<McpServer[]>([]);
   const [registrySearch, setRegistrySearch] = useState("");
   const [registryLoading, setRegistryLoading] = useState(false);
+
+  // npm MCP state
+  const [npmPackages, setNpmPackages] = useState<NpmMcpPackage[]>([]);
+  const [npmSearch, setNpmSearch] = useState("@ntruth/dbhub");
+  const [npmLoading, setNpmLoading] = useState(false);
 
   const [installing, setInstalling] = useState<Set<string>>(new Set());
 
@@ -81,6 +86,12 @@ export function McpMarket() {
   useEffect(() => {
     if (activeTab === "registry" && registryServers.length === 0) {
       loadRegistryServers();
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (activeTab === "npm" && npmPackages.length === 0) {
+      handleNpmSearch();
     }
   }, [activeTab]);
 
@@ -154,6 +165,24 @@ export function McpMarket() {
     }
   }, [registrySearch, loadRegistryServers, t]);
 
+  const handleNpmSearch = useCallback(async () => {
+    const query = npmSearch.trim();
+    if (!query) {
+      setNpmPackages([]);
+      return;
+    }
+    setNpmLoading(true);
+    try {
+      const packages = await api.searchNpmMcp(query, 30);
+      setNpmPackages(packages);
+    } catch (err) {
+      console.error("Failed to search npm MCP packages:", err);
+      toast.error(t("mcp.market.error"));
+    } finally {
+      setNpmLoading(false);
+    }
+  }, [npmSearch, t]);
+
   // Filter domestic servers
   const filteredDomestic = useMemo(() => {
     let servers = domesticServers;
@@ -183,6 +212,17 @@ export function McpMarket() {
         (s.description?.toLowerCase().includes(needle) ?? false)
     );
   }, [registryServers, registrySearch]);
+
+  const filteredNpmPackages = useMemo(() => {
+    if (!npmSearch) return npmPackages;
+    const needle = npmSearch.toLowerCase();
+    return npmPackages.filter(
+      (pkg) =>
+        pkg.name.toLowerCase().includes(needle) ||
+        (pkg.description?.toLowerCase().includes(needle) ?? false) ||
+        pkg.keywords.some((kw) => kw.toLowerCase().includes(needle))
+    );
+  }, [npmPackages, npmSearch]);
 
   // Install domestic MCP directly into detected agent configs
   const handleInstallDomestic = async (server: DomesticMcpServer) => {
@@ -236,6 +276,37 @@ export function McpMarket() {
     }
   };
 
+  const handleInstallNpm = async (pkg: NpmMcpPackage) => {
+    const id = pkg.name;
+    setInstalling((prev) => new Set(prev).add(id));
+    try {
+      const result = await api.installNpmMcpDirect(pkg.name);
+      try {
+        await navigator.clipboard.writeText(result.config_snippet);
+      } catch {
+        // clipboard may be denied; ignore
+      }
+      if (result.written_targets.length > 0) {
+        toast.success(
+          `${pkg.name} 已写入：${result.written_targets.join("、")}（配置已复制到剪贴板）`
+        );
+      } else {
+        toast.info(
+          `${pkg.name} 未检测到受支持的客户端配置，配置已复制到剪贴板，请粘贴到 mcp.json 的 mcpServers 节点`
+        );
+      }
+    } catch (err) {
+      console.error("Failed to install npm MCP:", err);
+      toast.error(`${pkg.name} ${t("mcp.market.error")}`);
+    } finally {
+      setInstalling((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
+  };
+
   const getProviderLabel = (providerId: string) => {
     return domesticProviders.find((p) => p.id === providerId)?.name || providerId;
   };
@@ -268,6 +339,7 @@ export function McpMarket() {
         {([
           { key: "domestic", label: t("mcp.market.tab_domestic"), icon: Building2 },
           { key: "registry", label: t("mcp.market.tab_registry"), icon: Globe },
+          { key: "npm", label: t("mcp.market.tab_npm"), icon: Package },
         ] as const).map(({ key, label, icon: Icon }) => (
           <button
             key={key}
@@ -421,6 +493,61 @@ export function McpMarket() {
           )}
         </>
       )}
+
+      {/* npm MCP Tab */}
+      {activeTab === "npm" && (
+        <>
+          <div className="app-toolbar mb-3">
+            <div className="relative w-full max-w-[400px]">
+              <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
+              <input
+                type="text"
+                value={npmSearch}
+                onChange={(e) => setNpmSearch(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleNpmSearch()}
+                placeholder={t("mcp.market.search_npm_placeholder")}
+                className="app-input w-full bg-background pl-9"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+              />
+            </div>
+            <button onClick={handleNpmSearch} className="app-button-secondary">
+              <Search className="h-3.5 w-3.5" />
+              {t("common.search")}
+            </button>
+          </div>
+
+          {npmLoading && (
+            <div className="flex flex-1 items-center justify-center py-20">
+              <Loader2 className="h-6 w-6 animate-spin text-muted" />
+              <span className="ml-2 text-[13px] text-muted">{t("mcp.market.loading")}</span>
+            </div>
+          )}
+
+          {!npmLoading && filteredNpmPackages.length === 0 && (
+            <div className="flex flex-1 flex-col items-center justify-center py-20 text-center">
+              <Search className="mb-4 h-12 w-12 text-faint" />
+              <h3 className="mb-1.5 text-[14px] font-semibold text-tertiary">
+                {t("mcp.market.no_results")}
+              </h3>
+            </div>
+          )}
+
+          {!npmLoading && filteredNpmPackages.length > 0 && (
+            <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-3">
+              {filteredNpmPackages.map((pkg) => (
+                <NpmMcpCard
+                  key={pkg.name}
+                  pkg={pkg}
+                  isInstalling={installing.has(pkg.name)}
+                  onInstall={() => handleInstallNpm(pkg)}
+                />
+              ))}
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
@@ -502,6 +629,89 @@ function DomesticMcpCard({
             )}
           </button>
         )}
+      </div>
+    </div>
+  );
+}
+
+function NpmMcpCard({
+  pkg,
+  isInstalling,
+  onInstall,
+}: {
+  pkg: NpmMcpPackage;
+  isInstalling: boolean;
+  onInstall: () => void;
+}) {
+  const { t } = useTranslation();
+
+  const openLink = (url: string | null) => {
+    if (url) {
+      window.open(url, "_blank");
+    }
+  };
+
+  return (
+    <div className="app-panel flex flex-col gap-2 p-3 transition-colors hover:border-border hover:bg-surface-hover">
+      <div className="flex items-start justify-between gap-2">
+        <h3 className="truncate font-mono text-[13px] font-semibold text-primary" title={pkg.name}>
+          {pkg.name}
+        </h3>
+        <span className="shrink-0 rounded-full bg-surface-hover px-2 py-0.5 text-[11px] font-medium text-muted">
+          npm
+        </span>
+      </div>
+
+      <p className="line-clamp-2 text-[13px] leading-[18px] text-muted" title={pkg.description || "No description"}>
+        {pkg.description || "No description available"}
+      </p>
+
+      <div className="flex flex-wrap items-center gap-1.5 text-[12px] text-muted">
+        <span className="rounded bg-surface-hover px-1.5 py-0.5 font-mono text-[11px] text-secondary">
+          v{pkg.version}
+        </span>
+        {typeof pkg.weekly_downloads === "number" && (
+          <span className="rounded bg-surface-hover px-1.5 py-0.5 text-[11px] text-secondary">
+            {pkg.weekly_downloads.toLocaleString()} / week
+          </span>
+        )}
+      </div>
+
+      <div className="flex gap-2 text-[12px]">
+        <button
+          onClick={() => openLink(pkg.npm_url)}
+          className="text-muted transition-colors hover:text-primary"
+        >
+          npm
+        </button>
+        {pkg.repository_url && (
+          <button
+            onClick={() => openLink(pkg.repository_url)}
+            className="text-muted transition-colors hover:text-primary"
+          >
+            repo
+          </button>
+        )}
+      </div>
+
+      <div className="mt-auto pt-1">
+        <button
+          onClick={onInstall}
+          disabled={isInstalling}
+          className="app-button-primary w-full"
+        >
+          {isInstalling ? (
+            <>
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              {t("mcp.market.installing")}
+            </>
+          ) : (
+            <>
+              <Download className="h-3.5 w-3.5" />
+              {t("mcp.market.one_click_install")}
+            </>
+          )}
+        </button>
       </div>
     </div>
   );

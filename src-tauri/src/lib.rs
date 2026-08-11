@@ -848,6 +848,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(move |app| {
             // Snapshot the builder->setup gap BEFORE doing any work in setup,
@@ -1031,6 +1032,7 @@ pub fn run() {
             commands::browse::search_skillsmp,
             commands::browse::search_mcp_registry,
             commands::browse::list_mcp_registry,
+            commands::browse::search_npm_mcp,
             commands::browse::search_domestic_mcp,
             commands::browse::list_domestic_mcp,
             commands::browse::list_domestic_mcp_providers,
@@ -1038,6 +1040,7 @@ pub fn run() {
             commands::browse::search_gitee_skills,
             commands::browse::fetch_gitee_trending,
             commands::browse::install_domestic_mcp_direct,
+            commands::browse::install_npm_mcp_direct,
             commands::browse::install_domestic_mcp,
             commands::browse::install_registry_mcp,
             commands::browse::search_skillhub,
@@ -1052,6 +1055,7 @@ pub fn run() {
             commands::enterprise::enterprise_search_by_query,
             commands::enterprise::enterprise_is_authenticated,
             commands::enterprise::enterprise_logout,
+            commands::enterprise::enterprise_delete_skill,
             commands::enterprise::enterprise_submit_feedback,
             commands::enterprise::feedback_deploy_plugin,
             commands::enterprise::enterprise_upload_skill,

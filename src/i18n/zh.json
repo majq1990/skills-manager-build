@@ -967,7 +967,11 @@
     "installFailed": "安装失败",
     "alreadyInstalled": "已安装",
     "update": "更新",
-    "updateHint": "本地已安装，点击可重新安装/更新到企业最新版本"
+    "updateHint": "本地已安装，点击可重新安装/更新到企业最新版本",
+    "delete": "删除",
+    "deleteConfirm": "确定删除企业技能“{{name}}”及其全部已发布版本吗？",
+    "deleted": "已删除 {{name}}",
+    "deleteFailed": "删除失败"
   },
   "mcp": {
     "market": {
@@ -975,9 +979,11 @@
       "description": "浏览和安装 Model Context Protocol 服务器",
       "tab_domestic": "国内市场",
       "tab_registry": "全球仓库",
+      "tab_npm": "npm 包",
       "search_placeholder": "搜索 MCP 服务器...",
       "gitee_search_placeholder": "在 Gitee 上搜索 MCP...",
       "search_registry_placeholder": "搜索全球 MCP 仓库...",
+      "search_npm_placeholder": "搜索 npm MCP 包，如 @ntruth/dbhub",
       "filter.all": "全部",
       "loading": "加载中...",
       "no_results": "没有找到结果",

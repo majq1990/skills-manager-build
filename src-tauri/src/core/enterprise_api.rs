@@ -418,6 +418,28 @@ impl EnterpriseApi {
         })
     }
 
+    /// Delete an enterprise skill and all of its published versions.
+    pub fn delete_skill(&self, name: &str) -> Result<()> {
+        let client = Self::build_client();
+        let url = format!(
+            "{}/skills/{}",
+            self.base_url,
+            urlencoding::encode(name)
+        );
+        let resp = client
+            .delete(&url)
+            .header("Authorization", self.auth_header()?)
+            .send()
+            .context("Failed to delete enterprise skill")?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().unwrap_or_default();
+            anyhow::bail!("Failed to delete enterprise skill ({}): {}", status, text);
+        }
+        Ok(())
+    }
+
     /// 提交问题/建议反馈到企业服务器（服务端写钉钉电子表格一行）。
     /// type/skill/title/description；提交人由服务端从登录 JWT 自动带，无需前端传。
     pub fn submit_feedback(

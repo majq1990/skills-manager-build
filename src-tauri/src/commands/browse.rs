@@ -5,6 +5,7 @@ use crate::core::{
     domestic_mcp_api::{DomesticMcpMarket, DomesticMcpServer, McpProvider},
     error::AppError,
     gitee_api::{gitee_repo_to_domestic_mcp, GiteeApi},
+    mcp_npm_api::{package_server_key, NpmMcpApi, NpmMcpPackage},
     mcp_registry_api::{McpRegistryApi, McpServer},
     skill_store::SkillStore,
     skillhub_api::{SkillHubApi, SkillHubSkill},
@@ -110,6 +111,22 @@ pub async fn list_mcp_registry(
     tauri::async_runtime::spawn_blocking(move || {
         let api = McpRegistryApi::new();
         api.list_servers(page.unwrap_or(1), per_page.unwrap_or(20))
+            .map_err(|e| AppError::network(e.to_string()))
+    })
+    .await?
+}
+
+// ── npm MCP Packages ──
+
+#[tauri::command]
+pub async fn search_npm_mcp(
+    query: String,
+    limit: Option<usize>,
+) -> Result<Vec<NpmMcpPackage>, AppError> {
+    let bounded = limit.unwrap_or(30).clamp(1, 100);
+    tauri::async_runtime::spawn_blocking(move || {
+        let api = NpmMcpApi::new();
+        api.search_packages(&query, bounded)
             .map_err(|e| AppError::network(e.to_string()))
     })
     .await?
@@ -338,6 +355,81 @@ pub async fn install_domestic_mcp_direct(
 
     Ok(DomesticMcpInstallResult {
         server_name: server.name,
+        written_targets: written,
+        skipped_targets: skipped,
+        config_snippet,
+        server_key,
+    })
+}
+
+#[tauri::command]
+pub async fn install_npm_mcp_direct(
+    package_name: String,
+) -> Result<DomesticMcpInstallResult, AppError> {
+    let package_name = package_name.trim().to_string();
+    if package_name.is_empty() {
+        return Err(AppError::invalid_input("Package name is required"));
+    }
+
+    let api = NpmMcpApi::new();
+    let package = tauri::async_runtime::spawn_blocking({
+        let package_name = package_name.clone();
+        move || {
+            api.get_package(&package_name)
+                .map_err(|e| AppError::network(e.to_string()))
+        }
+    })
+    .await??;
+
+    let server_key = package_server_key(&package.name);
+    if server_key.is_empty() {
+        return Err(AppError::invalid_input(format!(
+            "Invalid npm package name: {}",
+            package.name
+        )));
+    }
+
+    let entry = serde_json::json!({
+        "command": "npx",
+        "args": ["-y", package.name],
+    });
+    let snippet_root = serde_json::json!({
+        "mcpServers": { server_key.clone(): entry.clone() }
+    });
+    let config_snippet =
+        serde_json::to_string_pretty(&snippet_root).unwrap_or_else(|_| "{}".to_string());
+
+    let candidates = agent_config_candidates();
+    let entry_clone = entry.clone();
+    let key_clone = server_key.clone();
+    let (written, skipped) = tauri::async_runtime::spawn_blocking(move || {
+        let mut written = Vec::new();
+        let mut skipped = Vec::new();
+        for (label, path) in candidates {
+            let should_write = path.exists()
+                || label == "Claude Desktop"
+                || label == "Cursor"
+                || label == "Claude Code"
+                || label == "WorkBuddy";
+            if !should_write {
+                skipped.push(label);
+                continue;
+            }
+            match merge_mcp_entry(&path, &key_clone, &entry_clone) {
+                Ok(_) => written.push(label),
+                Err(e) => {
+                    log::warn!("Failed to write npm MCP config to {:?}: {}", path, e);
+                    skipped.push(label);
+                }
+            }
+        }
+        (written, skipped)
+    })
+    .await
+    .map_err(|e| AppError::internal(format!("Task join failed: {}", e)))?;
+
+    Ok(DomesticMcpInstallResult {
+        server_name: package.name,
         written_targets: written,
         skipped_targets: skipped,
         config_snippet,

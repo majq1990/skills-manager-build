@@ -51,6 +51,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import { writeText as clipboardWriteText } from "@tauri-apps/plugin-clipboard-manager";
 import { check as checkUpdater } from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 import { open as dialogOpen, confirm as dialogConfirm } from "@tauri-apps/plugin-dialog";
 import { cn } from "../utils";
 import { useApp } from "../context/AppContext";
@@ -648,11 +649,13 @@ export function Settings() {
   const handleAutoUpdate = async () => {
     setInstalling(true);
     try {
-      const update = await checkUpdater();
+      const update = await checkUpdater(
+        IS_WINDOWS ? { target: "windows-x86_64-nsis" } : undefined,
+      );
       if (update) {
         toast.info(t("settings.installing"));
         await update.downloadAndInstall();
-        toast.success(t("settings.restartToApply"));
+        await relaunch();
       } else {
         toast.success(t("settings.noUpdate"));
       }

@@ -11,6 +11,7 @@ import {
   Shield,
   RefreshCw,
   CheckCircle2,
+  Trash2,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -22,7 +23,8 @@ import { useApp } from "../context/AppContext";
 
 export function EnterpriseMarket() {
   const { t } = useTranslation();
-  const { setEnterpriseUploadVisibilities } = useApp();
+  const { enterpriseUploadVisibilities, setEnterpriseUploadVisibilities } = useApp();
+  const canDeleteEnterpriseSkills = enterpriseUploadVisibilities.length > 0;
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [loading, setLoading] = useState(false);
   const [skills, setSkills] = useState<EnterpriseSkill[]>([]);
@@ -37,6 +39,7 @@ export function EnterpriseMarket() {
   const [loginLoading, setLoginLoading] = useState(false);
   const [selectedSkill, setSelectedSkill] = useState<EnterpriseSkill | null>(null);
   const [installing, setInstalling] = useState<Set<string>>(new Set());
+  const [deleting, setDeleting] = useState(false);
   // 本地已安装技能名（归一化小写），用于把企业市场里"本地已有"的技能标成已安装/更新
   const [installedNames, setInstalledNames] = useState<Set<string>>(new Set());
 
@@ -144,6 +147,23 @@ export function EnterpriseMarket() {
         next.delete(skill.name);
         return next;
       });
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!selectedSkill || deleting) return;
+    if (!window.confirm(t("enterprise.deleteConfirm", { name: selectedSkill.name }))) return;
+    setDeleting(true);
+    try {
+      await api.enterpriseDeleteSkill(selectedSkill.name);
+      const deletedName = selectedSkill.name;
+      setSkills((prev) => prev.filter((skill) => skill.name !== deletedName));
+      setSelectedSkill(null);
+      toast.success(t("enterprise.deleted", { name: deletedName }));
+    } catch (err) {
+      toast.error(`${t("enterprise.deleteFailed")}: ${String((err as any)?.message ?? err ?? "")}`);
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -508,6 +528,19 @@ export function EnterpriseMarket() {
       >
         {selectedSkill && (
           <div className="space-y-4">
+            {canDeleteEnterpriseSkills && (
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={handleDelete}
+                  disabled={deleting}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-red-500/40 px-3 py-1.5 text-sm text-red-400 hover:bg-red-500/10 disabled:opacity-60"
+                >
+                  {deleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                  {t("enterprise.delete")}
+                </button>
+              </div>
+            )}
             {selectedSkill.tags.length > 0 && (
               <div>
                 <h4 className="text-sm font-medium text-[var(--color-text-primary)] mb-2">Tags</h4>

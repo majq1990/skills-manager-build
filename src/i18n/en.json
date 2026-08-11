@@ -967,7 +967,11 @@
     "installFailed": "Install failed",
     "alreadyInstalled": "Installed",
     "update": "Update",
-    "updateHint": "Already installed locally. Click to reinstall / update to the latest enterprise version."
+    "updateHint": "Already installed locally. Click to reinstall / update to the latest enterprise version.",
+    "delete": "Delete",
+    "deleteConfirm": "Delete enterprise skill \"{{name}}\" and all published versions?",
+    "deleted": "Deleted {{name}}",
+    "deleteFailed": "Delete failed"
   },
   "mcp": {
     "market": {
@@ -975,9 +979,11 @@
       "description": "Browse and install Model Context Protocol servers",
       "tab_domestic": "Domestic",
       "tab_registry": "Global Registry",
+      "tab_npm": "npm Packages",
       "search_placeholder": "Search MCP servers...",
       "gitee_search_placeholder": "Search MCP on Gitee...",
       "search_registry_placeholder": "Search global MCP registry...",
+      "search_npm_placeholder": "Search npm MCP packages, e.g. @ntruth/dbhub",
       "filter.all": "All",
       "loading": "Loading...",
       "no_results": "No results found",

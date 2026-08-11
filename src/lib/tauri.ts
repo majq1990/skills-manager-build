@@ -749,6 +749,25 @@ export const searchMcpRegistry = (query: string, limit?: number) =>
 export const listMcpRegistry = (page?: number, perPage?: number) =>
   invoke<McpServer[]>("list_mcp_registry", { page: page ?? null, per_page: perPage ?? null });
 
+// ── npm MCP Packages ──
+
+export interface NpmMcpPackage {
+  name: string;
+  description: string | null;
+  version: string;
+  homepage: string | null;
+  repository_url: string | null;
+  npm_url: string;
+  weekly_downloads: number | null;
+  keywords: string[];
+}
+
+export const searchNpmMcp = (query: string, limit?: number) =>
+  invoke<NpmMcpPackage[]>("search_npm_mcp", { query, limit: limit ?? null });
+
+export const installNpmMcpDirect = (packageName: string) =>
+  invoke<DomesticMcpInstallResult>("install_npm_mcp_direct", { packageName });
+
 // ── Domestic MCP Market (China) ──
 
 export interface DomesticMcpServer {
@@ -873,6 +892,9 @@ export const enterpriseIsAuthenticated = () =>
 
 export const enterpriseLogout = () =>
   invoke<void>("enterprise_logout");
+
+export const enterpriseDeleteSkill = (name: string) =>
+  invoke<void>("enterprise_delete_skill", { name });
 
 export const enterpriseInstallSkill = (name: string, version: string) =>
   invoke<void>("enterprise_install_skill", { name, version });

@@ -538,6 +538,7 @@
     "rename": "重新命名",
     "save": "儲存",
     "create": "建立",
+    "search": "搜尋",
     "goToSettings": "設定",
     "expandAll": "展開全部",
     "collapse": "收合"
@@ -805,6 +806,31 @@
         "centerNewer": "中心有變更",
         "diverged": "衝突"
       }
+    }
+  },
+  "mcp": {
+    "market": {
+      "title": "MCP 市場",
+      "description": "瀏覽和安裝 Model Context Protocol 伺服器",
+      "tab_domestic": "國內市場",
+      "tab_registry": "全球倉庫",
+      "tab_npm": "npm 套件",
+      "search_placeholder": "搜尋 MCP 伺服器...",
+      "gitee_search_placeholder": "在 Gitee 上搜尋 MCP...",
+      "search_registry_placeholder": "搜尋全球 MCP 倉庫...",
+      "search_npm_placeholder": "搜尋 npm MCP 套件，例如 @ntruth/dbhub",
+      "filter.all": "全部",
+      "loading": "載入中...",
+      "no_results": "沒有找到結果",
+      "error": "操作失敗",
+      "gitee_error": "Gitee 搜尋失敗",
+      "open_repo": "開啟倉庫",
+      "installing": "安裝中...",
+      "one_click_install": "一鍵安裝",
+      "copied": "已複製",
+      "copy_config": "複製設定",
+      "copied_to_clipboard": "設定已複製到剪貼簿",
+      "copy_error": "複製失敗"
     }
   }
 }

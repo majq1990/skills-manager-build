@@ -5,6 +5,17 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.24.2] - 2026-08-10
+
+### 发布概览
+- 修复 Windows 企业端自动更新无法完成的问题。
+
+### 用户可见更新
+- Windows 更新完成后自动重启客户端并应用新版本。
+- Windows 更新明确使用 NSIS 安装包，避免 MSI 更新链路无法静默完成。
+
+### 开发者与治理更新
+- 接入 Tauri Process 插件，补齐更新安装后的重启流程。
 ## [1.24.1] - 2026-07-31
 
 ### 新增

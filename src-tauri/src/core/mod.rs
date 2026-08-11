@@ -15,6 +15,7 @@ pub mod gitee_api;
 pub mod install_cancel;
 pub mod installer;
 pub mod log_sanitize;
+pub mod mcp_npm_api;
 pub mod mcp_registry_api;
 pub mod memory;
 pub mod migrations;

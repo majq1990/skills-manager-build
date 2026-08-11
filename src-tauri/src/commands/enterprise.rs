@@ -237,3 +237,18 @@ pub async fn enterprise_upload_skill(
     })
     .await?
 }
+
+/// Delete an enterprise skill and all published versions.
+#[tauri::command]
+pub async fn enterprise_delete_skill(name: String) -> Result<(), AppError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let api_guard = get_or_create_api();
+        let api = api_guard.as_ref().unwrap();
+        if api.get_token().is_none() {
+            return Err(AppError::internal("Not authenticated"));
+        }
+        api.delete_skill(&name)
+            .map_err(|e| AppError::internal(format!("Delete enterprise skill failed: {e:#}")))
+    })
+    .await?
+}
