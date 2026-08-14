@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.24.2] - 2026-08-10
+
+### Release Overview
+- Fixed the Windows enterprise auto-update flow so installation completes reliably.
+
+### User-facing
+- Automatically relaunches the client after a Windows update is installed.
+- Explicitly selects the NSIS updater package on Windows for silent installation.
+- Fixed the generic Windows updater entry so 1.24.1 can perform its first upgrade using the NSIS installer.
+- Fixed the WorkBuddy skills directory lookup after installation so installed skills are available.
+- Fixed Windows enterprise-market downloads failing when HTTP/2 connections are reset by using HTTP/1.1 for enterprise API requests.
+
+### Developer & Governance
+- Added the Tauri Process plugin required for post-install relaunch.
+- Kept MSI as the manual-install entry while normalizing the generic Windows updater entry to NSIS.
+
 ## [1.11.4] - 2026-05-19
 
 ### Fixed

@@ -5,6 +5,22 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.24.2] - 2026-08-10
+
+### 发布概览
+- 修复 Windows 企业端自动更新无法完成的问题。
+
+### 用户可见更新
+- Windows 更新完成后自动重启客户端并应用新版本。
+- Windows 更新明确使用 NSIS 安装包，避免 MSI 更新链路无法静默完成。
+- 修正旧版本从 1.24.1 升级时的通用 Windows 更新入口，确保首次升级也使用 NSIS 安装包。
+- 修复应用安装后 WorkBuddy 技能目录定位错误导致技能不可用的问题。
+- 修复 Windows 企业市场下载在 HTTP/2 连接被重置时失败的问题，企业 API 客户端改用 HTTP/1.1。
+
+### 开发者与治理更新
+- 接入 Tauri Process 插件，补齐更新安装后的重启流程。
+- 发布清单保留 MSI 手动安装入口，同时将通用 Windows 更新入口规范化为 NSIS。
+
 ## [1.11.4] - 2026-05-19
 
 ### 修复
