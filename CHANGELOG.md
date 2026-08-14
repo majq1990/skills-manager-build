@@ -13,9 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### User-facing
 - Automatically relaunches the client after a Windows update is installed.
 - Explicitly selects the NSIS updater package on Windows for silent installation.
+- Fixed the generic Windows updater entry so 1.24.1 can perform its first upgrade using the NSIS installer.
+- Fixed the WorkBuddy skills directory lookup after installation so installed skills are available.
+- Fixed Windows enterprise-market downloads failing when HTTP/2 connections are reset by using HTTP/1.1 for enterprise API requests.
 
 ### Developer & Governance
 - Added the Tauri Process plugin required for post-install relaunch.
+- Kept MSI as the manual-install entry while normalizing the generic Windows updater entry to NSIS.
 ## [1.24.1] - 2026-07-31
 
 ### Added
