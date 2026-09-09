@@ -5,6 +5,7 @@ use std::time::Instant;
 use tauri::State;
 
 use crate::core::{
+    agent_service,
     error::AppError,
     scenario_service::{self, BatchApplyMode},
     skill_store::{ScenarioRecord, SkillStore},
@@ -37,6 +38,7 @@ pub struct PresetDto {
     pub icon: Option<String>,
     pub sort_order: i32,
     pub skill_count: i64,
+    pub agent_count: i64,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -53,6 +55,7 @@ pub async fn get_presets(store: State<'_, Arc<SkillStore>>) -> Result<Vec<Preset
         let mut result = Vec::new();
         for s in scenarios {
             let skill_count = store.count_skills_for_scenario(&s.id).unwrap_or(0);
+            let agent_count = store.count_agents_for_scenario(&s.id).unwrap_or(0);
             result.push(PresetDto {
                 id: s.id,
                 name: s.name,
@@ -60,6 +63,7 @@ pub async fn get_presets(store: State<'_, Arc<SkillStore>>) -> Result<Vec<Preset
                 icon: s.icon,
                 sort_order: s.sort_order,
                 skill_count,
+                agent_count,
                 created_at: s.created_at,
                 updated_at: s.updated_at,
             });
@@ -85,6 +89,7 @@ pub async fn get_active_preset(
             let scenarios = store.get_all_scenarios().map_err(AppError::db)?;
             if let Some(s) = scenarios.into_iter().find(|s| s.id == id) {
                 let count = store.count_skills_for_scenario(&s.id).unwrap_or(0);
+                let agent_count = store.count_agents_for_scenario(&s.id).unwrap_or(0);
                 return Ok(Some(PresetDto {
                     id: s.id,
                     name: s.name,
@@ -92,6 +97,7 @@ pub async fn get_active_preset(
                     icon: s.icon,
                     sort_order: s.sort_order,
                     skill_count: count,
+                    agent_count,
                     created_at: s.created_at,
                     updated_at: s.updated_at,
                 }));
@@ -144,6 +150,7 @@ pub async fn create_preset(
             icon,
             sort_order: 999,
             skill_count: 0,
+            agent_count: 0,
             created_at: now,
             updated_at: now,
         })
@@ -254,11 +261,33 @@ async fn apply_preset_to_default_impl(
     id: String,
     store: Arc<SkillStore>,
 ) -> Result<(), AppError> {
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        scenario_service::apply_scenario_to_default(&store, &id)
+    let result = tauri::async_runtime::spawn_blocking({
+        let store = store.clone();
+        let id = id.clone();
+        move || scenario_service::apply_scenario_to_default(&store, &id)
     })
     .await?;
     if result.is_ok() {
+        // Best-effort: deploy preset member agents alongside skills.
+        // Agent failures are collected and logged without failing the
+        // preset application itself.
+        let agent_store = store.clone();
+        let agent_id = id.clone();
+        let _ = tauri::async_runtime::spawn_blocking(move || {
+            sync_metadata::with_repo_lock("apply preset agents", || {
+                let attempts = agent_service::sync_agent_scenario(&agent_store, &agent_id);
+                for attempt in attempts.iter().filter(|a| !a.ok) {
+                    log::warn!(
+                        "Preset agent deploy skipped: {} -> {}: {}",
+                        attempt.agent_name,
+                        attempt.tool,
+                        attempt.error.as_deref().unwrap_or("unknown")
+                    );
+                }
+                Ok(())
+            })
+        })
+        .await;
         refresh_tray_menu_best_effort(&app);
     }
     result
@@ -439,9 +468,144 @@ pub async fn apply_preset_to_coding_agents(
     result
 }
 
+// ── Agent preset membership (P2 混装) ─────────────────────────────────────
+// Membership-only edits, mirroring add/remove_skill_to_preset: they never
+// write to tool directories; deployment happens on explicit preset apply.
+
+#[tauri::command]
+pub async fn add_agent_to_preset(
+    app: tauri::AppHandle,
+    agent_id: String,
+    preset_id: String,
+    store: State<'_, Arc<SkillStore>>,
+) -> Result<(), AppError> {
+    let store = store.inner().clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        sync_metadata::with_repo_lock("add agent to scenario", || {
+            store.add_agent_to_scenario(&preset_id, &agent_id)?;
+            sync_metadata::write_all_from_db_unlocked(&store)
+        })
+        .map_err(AppError::db)?;
+        Ok(())
+    })
+    .await?;
+    if result.is_ok() {
+        refresh_tray_menu_best_effort(&app);
+    }
+    result
+}
+
+#[tauri::command]
+pub async fn remove_agent_from_preset(
+    app: tauri::AppHandle,
+    agent_id: String,
+    preset_id: String,
+    store: State<'_, Arc<SkillStore>>,
+) -> Result<(), AppError> {
+    let store = store.inner().clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        sync_metadata::with_repo_lock("remove agent from scenario", || {
+            store.remove_agent_from_scenario(&preset_id, &agent_id)?;
+            sync_metadata::write_all_from_db_unlocked(&store)
+        })
+        .map_err(AppError::db)?;
+        Ok(())
+    })
+    .await?;
+    if result.is_ok() {
+        refresh_tray_menu_best_effort(&app);
+    }
+    result
+}
+
+#[tauri::command]
+pub async fn get_preset_agents(
+    preset_id: String,
+    store: State<'_, Arc<SkillStore>>,
+) -> Result<Vec<crate::core::agent_store::AgentRecord>, AppError> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        store.get_agents_for_scenario(&preset_id).map_err(AppError::db)
+    })
+    .await?
+}
+
+#[derive(Debug, Serialize)]
+pub struct AgentPresetToolToggleDto {
+    pub tool: String,
+    pub display_name: String,
+    pub installed: bool,
+    pub enabled: bool,
+}
+
+#[tauri::command]
+pub async fn get_agent_preset_tool_toggles(
+    preset_id: String,
+    agent_id: String,
+    store: State<'_, Arc<SkillStore>>,
+) -> Result<Vec<AgentPresetToolToggleDto>, AppError> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let adapters = agent_service::agent_capable_installed_adapters(&store);
+        let keys: Vec<String> = adapters.iter().map(|a| a.key.clone()).collect();
+        store
+            .ensure_scenario_agent_tool_defaults(&preset_id, &agent_id, &keys)
+            .map_err(AppError::db)?;
+        let enabled: std::collections::HashSet<String> = store
+            .get_enabled_tools_for_scenario_agent(&preset_id, &agent_id)
+            .map_err(AppError::db)?
+            .into_iter()
+            .collect();
+        let all = tool_adapters::all_tool_adapters(&store);
+        let installed: std::collections::HashSet<String> = adapters
+            .iter()
+            .map(|a| a.key.clone())
+            .collect();
+        Ok(tool_adapters::default_tool_adapters()
+            .into_iter()
+            .filter(|a| a.supports_agents())
+            .map(|a| {
+                let display = all
+                    .iter()
+                    .find(|x| x.key == a.key)
+                    .map(|x| x.display_name.clone())
+                    .unwrap_or_else(|| a.display_name.clone());
+                AgentPresetToolToggleDto {
+                    tool: a.key.clone(),
+                    display_name: display,
+                    installed: installed.contains(&a.key),
+                    enabled: installed.contains(&a.key)
+                        && enabled.contains(&a.key),
+                }
+            })
+            .collect())
+    })
+    .await?
+}
+
+#[tauri::command]
+pub async fn set_agent_preset_tool_enabled(
+    preset_id: String,
+    agent_id: String,
+    tool: String,
+    enabled: bool,
+    store: State<'_, Arc<SkillStore>>,
+) -> Result<(), AppError> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        sync_metadata::with_repo_lock("set agent preset tool", || {
+            store.set_scenario_agent_tool_enabled(&preset_id, &agent_id, &tool, enabled)?;
+            sync_metadata::write_all_from_db_unlocked(&store)
+        })
+        .map_err(AppError::db)
+    })
+    .await?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use crate::core::scenario_service::{
         collect_scenario_sync_targets, sync_desired_targets, unsync_obsolete_scenario_targets,
     };

@@ -13,7 +13,10 @@ static ENTERPRISE_API: Mutex<Option<EnterpriseApi>> = Mutex::new(None);
 const DEFAULT_ENTERPRISE_URL: &str = "https://demo.egova.com.cn/skill-api";
 
 fn get_or_create_api() -> std::sync::MutexGuard<'static, Option<EnterpriseApi>> {
-    let mut api = ENTERPRISE_API.lock().unwrap();
+    // A panic in whichever thread held this lock (e.g. a reqwest::blocking
+    // runtime dropped inside an async context) must not permanently brick
+    // every enterprise command until relaunch: recover from poisoning.
+    let mut api = ENTERPRISE_API.lock().unwrap_or_else(|p| p.into_inner());
     if api.is_none() {
         *api = Some(EnterpriseApi::new(DEFAULT_ENTERPRISE_URL));
     }
@@ -56,12 +59,18 @@ pub async fn enterprise_login(
     username: String,
     password: String,
 ) -> Result<FrontendLoginResponse, AppError> {
-    let resp = {
+    // reqwest::blocking (and the std Mutex) must stay off the async runtime:
+    // a blocking client created/dropped in async context panics and poisons
+    // the global ENTERPRISE_API mutex, which previously bricked every
+    // enterprise command (including login) until the app was relaunched.
+    let store = store.inner().clone();
+    let resp = tauri::async_runtime::spawn_blocking(move || {
         let mut api_guard = get_or_create_api();
         let api = api_guard.as_mut().unwrap();
         api.login(&username, &password)
-            .map_err(|e| AppError::internal(format!("Enterprise login failed: {}", e)))?
-    };
+            .map_err(|e| AppError::internal(format!("Enterprise login failed: {}", e)))
+    })
+    .await??;
 
     // 登录成功后：①把 JWT 投递给各 agent 的 token 文件；②联动部署插件到已装 agent；
     // ③后台自动更新已装的企业 skill（有 token 才能拉/下载）。均失败不影响登录本身。
@@ -69,7 +78,6 @@ pub async fn enterprise_login(
         crate::core::feedback_token::write_token(&resp.token);
         deploy_feedback_from_app(&app);
 
-        let store = store.inner().clone();
         let app_bg = app.clone();
         tauri::async_runtime::spawn_blocking(move || {
             crate::commands::skills::auto_update_enterprise_skills(&store, &app_bg);
@@ -81,56 +89,74 @@ pub async fn enterprise_login(
 
 #[tauri::command]
 pub async fn enterprise_list_skills() -> Result<Vec<EnterpriseSkill>, AppError> {
-    let api_guard = get_or_create_api();
-    let api = api_guard.as_ref().unwrap();
+    tauri::async_runtime::spawn_blocking(|| {
+        let api_guard = get_or_create_api();
+        let api = api_guard.as_ref().unwrap();
 
-    api.list_skills()
-        .map_err(|e| AppError::internal(format!("Failed to list enterprise skills: {}", e)))
+        api.list_skills()
+            .map_err(|e| AppError::internal(format!("Failed to list enterprise skills: {}", e)))
+    })
+    .await?
 }
 
 #[tauri::command]
 pub async fn enterprise_get_tags() -> Result<Vec<String>, AppError> {
-    let api_guard = get_or_create_api();
-    let api = api_guard.as_ref().unwrap();
+    tauri::async_runtime::spawn_blocking(|| {
+        let api_guard = get_or_create_api();
+        let api = api_guard.as_ref().unwrap();
 
-    api.get_tags()
-        .map_err(|e| AppError::internal(format!("Failed to get enterprise tags: {}", e)))
+        api.get_tags()
+            .map_err(|e| AppError::internal(format!("Failed to get enterprise tags: {}", e)))
+    })
+    .await?
 }
 
 #[tauri::command]
 pub async fn enterprise_search_by_tag(tag: String) -> Result<Vec<EnterpriseSkill>, AppError> {
-    let api_guard = get_or_create_api();
-    let api = api_guard.as_ref().unwrap();
+    tauri::async_runtime::spawn_blocking(move || {
+        let api_guard = get_or_create_api();
+        let api = api_guard.as_ref().unwrap();
 
-    api.search_by_tag(&tag)
-        .map_err(|e| AppError::internal(format!("Failed to search by tag: {}", e)))
+        api.search_by_tag(&tag)
+            .map_err(|e| AppError::internal(format!("Failed to search by tag: {}", e)))
+    })
+    .await?
 }
 
 #[tauri::command]
 pub async fn enterprise_search_by_query(query: String) -> Result<Vec<EnterpriseSkill>, AppError> {
-    let api_guard = get_or_create_api();
-    let api = api_guard.as_ref().unwrap();
+    tauri::async_runtime::spawn_blocking(move || {
+        let api_guard = get_or_create_api();
+        let api = api_guard.as_ref().unwrap();
 
-    api.search_by_query(&query)
-        .map_err(|e| AppError::internal(format!("Failed to search enterprise skills: {}", e)))
+        api.search_by_query(&query)
+            .map_err(|e| AppError::internal(format!("Failed to search enterprise skills: {}", e)))
+    })
+    .await?
 }
 
 #[tauri::command]
 pub async fn enterprise_is_authenticated() -> Result<bool, AppError> {
-    let api_guard = get_or_create_api();
-    let api = api_guard.as_ref().unwrap();
+    tauri::async_runtime::spawn_blocking(|| {
+        let api_guard = get_or_create_api();
+        let api = api_guard.as_ref().unwrap();
 
-    Ok(api.get_token().is_some())
+        Ok(api.get_token().is_some())
+    })
+    .await?
 }
 
 #[tauri::command]
 pub async fn enterprise_logout() -> Result<(), AppError> {
-    let mut api_guard = get_or_create_api();
-    let api = api_guard.as_mut().unwrap();
+    tauri::async_runtime::spawn_blocking(|| {
+        let mut api_guard = get_or_create_api();
+        let api = api_guard.as_mut().unwrap();
 
-    api.set_token(String::new());
-    crate::core::feedback_token::clear_token();
-    Ok(())
+        api.set_token(String::new());
+        crate::core::feedback_token::clear_token();
+        Ok(())
+    })
+    .await?
 }
 
 /// 把 feedback-monitor 插件联动部署到已安装的 agent（opencode/Claude Code/WorkBuddy）。
@@ -166,13 +192,16 @@ pub async fn enterprise_submit_feedback(
     title: String,
     description: String,
 ) -> Result<(), AppError> {
-    let api_guard = get_or_create_api();
-    let api = api_guard.as_ref().unwrap();
-    if api.get_token().is_none() {
-        return Err(AppError::internal("Not authenticated"));
-    }
-    api.submit_feedback(&feedback_type, &skill, &title, &description)
-        .map_err(|e| AppError::internal(format!("Submit feedback failed: {}", e)))
+    tauri::async_runtime::spawn_blocking(move || {
+        let api_guard = get_or_create_api();
+        let api = api_guard.as_ref().unwrap();
+        if api.get_token().is_none() {
+            return Err(AppError::internal("Not authenticated"));
+        }
+        api.submit_feedback(&feedback_type, &skill, &title, &description)
+            .map_err(|e| AppError::internal(format!("Submit feedback failed: {}", e)))
+    })
+    .await?
 }
 
 /// 用当前登录态（全局 ENTERPRISE_API 内存 token）下载企业技能 zip 字节。

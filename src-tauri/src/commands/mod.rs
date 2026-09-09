@@ -1,4 +1,5 @@
 pub mod agent_workspace;
+pub mod agents;
 pub mod browse;
 pub mod enterprise;
 pub mod git_backup;

@@ -518,7 +518,12 @@
     "gitErrorRejected": "遠端有新的更新，需要先合併後再同步。",
     "gitErrorUnrelatedHistories": "本機倉庫與遠端倉庫歷史不一致。請打開「修復同步設定」選擇處理方式。",
     "gitErrorNoUpstream": "尚未建立遠端追蹤關係。請打開「修復同步設定」處理。",
-    "gitErrorGeneric": "Git 操作失敗，請檢查設定中的遠端倉庫位址後重試。"
+    "gitErrorGeneric": "Git 操作失敗，請檢查設定中的遠端倉庫位址後重試。",
+    "agentBuiltinTitle": "Agent 內置保護",
+    "agentBuiltinNames": "額外內置 Agent 名",
+    "agentBuiltinDesc": "與內置 Agent 同名的自訂 Agent 會被拒絕部署（永不覆寫工具自帶 Agent）。opencode 已內置 general / explore / review / plan / build，此處可追加其他工具未來新增的內置名，逗號分隔。",
+    "agentBuiltinPlaceholder": "例如：helper, planner",
+    "agentBuiltinSaved": "內置保護名單已儲存"
   },
   "common": {
     "loading": "載入中...",
@@ -832,5 +837,29 @@
       "copied_to_clipboard": "設定已複製到剪貼簿",
       "copy_error": "複製失敗"
     }
+  },
+  "agentLib": {
+    "nav": "Agent庫",
+    "title": "Agents 庫",
+    "import": "從工具匯入",
+    "importTitle": "從工具目錄匯入 Agent",
+    "imported": "已匯入",
+    "importAll": "全部匯入",
+    "noScanResults": "未發現可匯入的 Agent 檔案",
+    "empty": "還沒有納管的 Agent，點擊「從工具匯入」收編現有定義",
+    "deploySection": "分發到工具",
+    "missingVariant": "缺 variant，請先產生",
+    "genVariant": "產生 variant",
+    "synced": "已分發",
+    "unsynced": "已解除",
+    "variantGenerated": "variant 已產生",
+    "deleted": "Agent 已刪除",
+    "deleteConfirm": "刪除 Agent「{{name}}」？將同時解除其在所有工具上的部署。",
+    "presetSection": "Preset 歸屬",
+    "noPresets": "暫無 Preset",
+    "upload": "上傳 Agent"
+  },
+  "feedback": {
+    "relatedAgent": "關聯 Agent"
   }
 }

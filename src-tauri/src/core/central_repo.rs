@@ -149,6 +149,19 @@ pub fn skills_dir() -> PathBuf {
     base_dir().join("skills")
 }
 
+/// Central registry root for agent artifacts: `~/.skills-manager/agents/`.
+/// Each agent occupies one `<agent-id>/` directory holding its canonical
+/// `AGENT.md` plus optional per-tool variant files (see agent_variant.rs).
+pub fn agents_dir() -> PathBuf {
+    base_dir().join("agents")
+}
+
+/// Staging root used to assemble skill-wrapped agent deployments before
+/// handing them to the directory-level sync engine.
+pub fn agent_staging_dir() -> PathBuf {
+    base_dir().join("cache").join("agent-staging")
+}
+
 /// Derive a stable per-skills-root state directory under the user's default base.
 ///
 /// CLI's `--skills-root` lets agents operate on an external skills checkout
@@ -364,7 +377,13 @@ pub fn ensure_central_repo() -> Result<()> {
     let current_base = base_dir();
     migrate_repo_if_needed(&mut config, &current_base)?;
 
-    let dirs = [skills_dir(), scenarios_dir(), cache_dir(), logs_dir()];
+    let dirs = [
+        skills_dir(),
+        agents_dir(),
+        scenarios_dir(),
+        cache_dir(),
+        logs_dir(),
+    ];
     for d in &dirs {
         fs::create_dir_all(d)?;
     }

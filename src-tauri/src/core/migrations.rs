@@ -2,7 +2,7 @@ use anyhow::{bail, Context, Result};
 use rusqlite::Connection;
 
 /// Current schema version. Bump this when adding a new migration.
-const LATEST_VERSION: u32 = 6;
+const LATEST_VERSION: u32 = 8;
 
 /// Run all pending migrations on the database.
 ///
@@ -53,6 +53,8 @@ fn migrate_step(conn: &Connection, from_version: u32) -> Result<()> {
         3 => migrate_v3_to_v4(conn),
         4 => migrate_v4_to_v5(conn),
         5 => migrate_v5_to_v6(conn),
+        6 => migrate_v6_to_v7(conn),
+        7 => migrate_v7_to_v8(conn),
         _ => bail!("unknown migration version: {from_version}"),
     }
 }
@@ -275,6 +277,81 @@ fn migrate_v5_to_v6(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// v6 → v7: Introduce the agent artifact family — central registry,
+/// per-tool deployment targets, and unmanaged discovery records.
+/// Mirrors the skills tables' shape so the sync engine, audit log,
+/// and Git backup can treat both families uniformly.
+fn migrate_v6_to_v7(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS agents (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT,
+            source_type TEXT NOT NULL,
+            source_ref TEXT,
+            central_path TEXT NOT NULL UNIQUE,
+            content_hash TEXT,
+            enabled INTEGER DEFAULT 1,
+            created_at INTEGER,
+            updated_at INTEGER,
+            status TEXT DEFAULT 'ok'
+        );
+        CREATE INDEX IF NOT EXISTS idx_agents_name ON agents(name);
+
+        CREATE TABLE IF NOT EXISTS agent_targets (
+            id TEXT PRIMARY KEY,
+            agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+            tool TEXT NOT NULL,
+            target_path TEXT NOT NULL,
+            mode TEXT NOT NULL,
+            status TEXT DEFAULT 'ok',
+            synced_at INTEGER,
+            last_error TEXT,
+            source_hash TEXT,
+            UNIQUE(agent_id, tool)
+        );
+
+        CREATE TABLE IF NOT EXISTS discovered_agents (
+            id TEXT PRIMARY KEY,
+            tool TEXT NOT NULL,
+            found_path TEXT NOT NULL,
+            name_guess TEXT,
+            fingerprint TEXT,
+            found_at INTEGER NOT NULL,
+            imported_agent_id TEXT REFERENCES agents(id) ON DELETE SET NULL
+        );
+        ",
+    )?;
+    Ok(())
+}
+
+/// v7 → v8: Preset (scenario) membership for agents plus the per-tool
+/// deployment toggles, mirroring scenario_skills / scenario_skill_tools.
+fn migrate_v7_to_v8(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "
+        CREATE TABLE IF NOT EXISTS scenario_agents (
+            scenario_id TEXT NOT NULL REFERENCES scenarios(id) ON DELETE CASCADE,
+            agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+            added_at INTEGER,
+            sort_order INTEGER DEFAULT 0,
+            PRIMARY KEY(scenario_id, agent_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS scenario_agent_tools (
+            scenario_id TEXT NOT NULL REFERENCES scenarios(id) ON DELETE CASCADE,
+            agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+            tool TEXT NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            updated_at INTEGER NOT NULL,
+            PRIMARY KEY(scenario_id, agent_id, tool)
+        );
+        ",
+    )?;
+    Ok(())
+}
+
 // ── Helpers ──
 
 fn add_column_if_missing(
@@ -343,6 +420,11 @@ mod tests {
         assert!(tables.contains(&"skill_tags".to_string()));
         assert!(tables.contains(&"scenario_skill_tools".to_string()));
         assert!(tables.contains(&"audit_log".to_string()));
+        assert!(tables.contains(&"agents".to_string()));
+        assert!(tables.contains(&"agent_targets".to_string()));
+        assert!(tables.contains(&"discovered_agents".to_string()));
+        assert!(tables.contains(&"scenario_agents".to_string()));
+        assert!(tables.contains(&"scenario_agent_tools".to_string()));
     }
 
     #[test]

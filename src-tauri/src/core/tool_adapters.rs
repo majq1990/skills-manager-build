@@ -14,6 +14,33 @@ pub enum ToolCategory {
     Lobster,
 }
 
+/// How agent definition files are deployed for a tool (see relative_agents_dir).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum AgentDeployKind {
+    /// The tool reads agent definitions as loose single files with the given
+    /// extension (e.g. `md` for opencode, `toml` for codex). Deployment
+    /// writes `<agents_dir>/<agent-id>.<ext>`.
+    File { ext: String },
+    /// The tool has no agent directory of its own but reads skills
+    /// (SKILL.md directories). Deployment wraps the agent definition as
+    /// `<skills_dir>/<agent-id>/SKILL.md`.
+    SkillWrapped,
+    /// The tool loads agents as CodeBuddy-style expert plugins from a local
+    /// marketplace root (WorkBuddy). `agents_dir` points at
+    /// `.../marketplaces/my-experts/plugins`; deployment materializes one
+    /// plugin directory per agent:
+    ///
+    /// ```text
+    /// <agents_dir>/<agent-id>/
+    /// ├── .codebuddy-plugin/plugin.json   (generated, editable)
+    /// └── agents/<agent-id>.md            (canonical or workbuddy variant)
+    /// ```
+    ///
+    /// plus an entry in the marketplace root's `marketplace.json`.
+    ExpertPlugin,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ToolAdapter {
     pub key: String,
@@ -44,6 +71,49 @@ pub struct ToolAdapter {
     /// UI grouping. See [`ToolCategory`].
     #[serde(default)]
     pub category: ToolCategory,
+    /// Directory (relative to home) where this tool reads agent definition
+    /// files. `None` = the tool does not participate in agent distribution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relative_agents_dir: Option<String>,
+    /// How agent definitions must be materialized for this tool. `None`
+    /// whenever `relative_agents_dir` is `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_deploy_kind: Option<AgentDeployKind>,
+    /// Extra candidate directories (relative to home) to probe for the
+    /// agents directory when the primary path does not exist yet (e.g.
+    /// opencode's historical singular `agent/` spelling).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub additional_agent_scan_dirs: Vec<String>,
+    /// Read-only deny list of tool-builtin agent names. skills-manager
+    /// never deploys, overwrites, or removes files whose stem matches one
+    /// of these — built-in agents are the tool's own territory.
+    #[serde(default, skip_serializing_if = "slice_is_empty")]
+    pub builtin_agent_names: &'static [&'static str],
+}
+
+fn slice_is_empty(names: &[&str]) -> bool {
+    names.is_empty()
+}
+
+impl Default for ToolAdapter {
+    fn default() -> Self {
+        Self {
+            key: String::new(),
+            display_name: String::new(),
+            relative_skills_dir: String::new(),
+            relative_detect_dir: String::new(),
+            additional_scan_dirs: Vec::new(),
+            override_skills_dir: None,
+            is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
+            category: ToolCategory::default(),
+            relative_agents_dir: None,
+            agent_deploy_kind: None,
+            additional_agent_scan_dirs: Vec::new(),
+            builtin_agent_names: &[],
+        }
+    }
 }
 
 /// Serializable custom tool definition stored in settings.
@@ -100,6 +170,27 @@ impl ToolAdapter {
         self.project_relative_skills_dir
             .as_deref()
             .unwrap_or(&self.relative_skills_dir)
+    }
+
+    /// Whether this tool participates in agent distribution.
+    pub fn supports_agents(&self) -> bool {
+        self.relative_agents_dir.is_some() && self.agent_deploy_kind.is_some()
+    }
+
+    /// Resolve the tool's agents directory (first existing candidate wins,
+    /// falling back to the primary path). `None` when the tool does not
+    /// support agents.
+    pub fn agents_dir(&self) -> Option<PathBuf> {
+        let primary = self.relative_agents_dir.as_deref()?;
+        let mut candidates = Self::candidate_paths(primary);
+        for rel in &self.additional_agent_scan_dirs {
+            for path in Self::candidate_paths(rel) {
+                if !candidates.contains(&path) {
+                    candidates.push(path);
+                }
+            }
+        }
+        Some(Self::select_existing_or_default(&candidates))
     }
 
     /// Returns all directories to scan for skills: the primary skills_dir plus any additional scan dirs.
@@ -175,6 +266,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
             key: "claude_code".into(),
@@ -187,19 +279,9 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
-            // Codex CLI reads user-level skills from `~/.codex/skills/` and
-            // project-level skills from `<repo>/.codex/skills/`. The shared
-            // `~/.agents/skills` location is kept as a discovery fallback so
-            // skills synced there by other adapters (or by older skills-manager
-            // versions that deployed Codex there by mistake) still surface in
-            // the Codex tab.
-            //
-            // Note: `AGENT_SKILLS_PATH` (openai/codex#13074) is a proposed
-            // env var that would let Codex load from `<custom>/.agents/skills`;
-            // until it ships, `.codex/skills` is the only path Codex CLI
-            // actually reads.
             key: "codex".into(),
             display_name: "Codex".into(),
             relative_skills_dir: ".codex/skills".into(),
@@ -210,6 +292,12 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            relative_agents_dir: Some(".codex/agents".into()),
+            agent_deploy_kind: Some(AgentDeployKind::File {
+                ext: "toml".into(),
+            }),
+            additional_agent_scan_dirs: vec![],
+            builtin_agent_names: &[],
         },
         ToolAdapter {
             key: "opencode".into(),
@@ -222,6 +310,13 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: Some(".opencode/skills".into()),
+            relative_agents_dir: Some(".config/opencode/agents".into()),
+            agent_deploy_kind: Some(AgentDeployKind::File { ext: "md".into() }),
+            // Probe the historical singular spelling too; the plural form is
+            // what current opencode builds load (verified 2026-09).
+            additional_agent_scan_dirs: vec![".config/opencode/agent".into()],
+            // opencode ships these agents built-in; never deploy over them.
+            builtin_agent_names: &["general", "explore", "review", "plan", "build"],
         },
         ToolAdapter {
             key: "antigravity".into(),
@@ -234,6 +329,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
             key: "amp".into(),
@@ -246,6 +342,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
             key: "kilo_code".into(),
@@ -258,6 +355,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
             key: "roo_code".into(),
@@ -270,6 +368,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
             key: "goose".into(),
@@ -282,6 +381,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
             key: "gemini_cli".into(),
@@ -294,6 +394,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
             key: "github_copilot".into(),
@@ -307,6 +408,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
             key: "openclaw".into(),
@@ -319,6 +421,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
             key: "droid".into(),
@@ -331,6 +434,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
             key: "windsurf".into(),
@@ -343,6 +447,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
             key: "trae".into(),
@@ -355,6 +460,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
             key: "cline".into(),
@@ -367,6 +473,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
             key: "deepagents".into(),
@@ -379,6 +486,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
             key: "firebender".into(),
@@ -391,6 +499,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
             key: "kimi".into(),
@@ -403,6 +512,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
             key: "replit".into(),
@@ -415,6 +525,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
             key: "warp".into(),
@@ -427,6 +538,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
             key: "augment".into(),
@@ -439,6 +551,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
             key: "bob".into(),
@@ -451,6 +564,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
             key: "codebuddy".into(),
@@ -463,6 +577,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
             key: "command_code".into(),
@@ -475,6 +590,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
             key: "continue".into(),
@@ -487,6 +603,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
             key: "cortex".into(),
@@ -499,6 +616,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
             key: "crush".into(),
@@ -511,6 +629,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
             key: "iflow".into(),
@@ -523,6 +642,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
             key: "junie".into(),
@@ -535,6 +655,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
             key: "kiro".into(),
@@ -547,6 +668,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
             key: "kode".into(),
@@ -559,6 +681,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
             key: "mcpjam".into(),
@@ -571,6 +694,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
             key: "mistral_vibe".into(),
@@ -583,6 +707,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
             key: "mux".into(),
@@ -595,6 +720,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
             key: "neovate".into(),
@@ -607,6 +733,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
             key: "openhands".into(),
@@ -619,6 +746,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
             key: "pi".into(),
@@ -631,6 +759,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
             key: "pochi".into(),
@@ -643,6 +772,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
             key: "qoder".into(),
@@ -655,6 +785,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
             key: "qwen_code".into(),
@@ -667,6 +798,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
             key: "trae_cn".into(),
@@ -679,6 +811,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
             key: "zencoder".into(),
@@ -691,6 +824,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
             key: "adal".into(),
@@ -703,6 +837,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
             key: "hermes".into(),
@@ -715,6 +850,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: true,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
             key: "qclaw".into(),
@@ -727,6 +863,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
             key: "easyclaw".into(),
@@ -739,6 +876,7 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
             key: "autoclaw".into(),
@@ -751,11 +889,15 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         },
         ToolAdapter {
             key: "workbuddy".into(),
             display_name: "WorkBuddy".into(),
-            relative_skills_dir: ".workbuddy/skills-marketplace/skills".into(),
+            // WorkBuddy loads user-installed skills from ~/.workbuddy/skills.
+            // ~/.workbuddy/skills-marketplace/skills is WorkBuddy's bundled
+            // marketplace cache and is not part of its user skill search path.
+            relative_skills_dir: ".workbuddy/skills".into(),
             relative_detect_dir: ".workbuddy".into(),
             additional_scan_dirs: vec![],
             override_skills_dir: None,
@@ -763,6 +905,34 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             is_custom: false,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            // WorkBuddy "experts" ARE agents: each one is a CodeBuddy plugin
+            // under the user's local `my-experts` marketplace, declaring
+            // agents/*.md in its plugin.json. We only ever touch this
+            // user-owned marketplace — never plugins/cache or the official
+            // marketplaces (built-in experts stay untouchable).
+            relative_agents_dir: Some(".workbuddy/plugins/marketplaces/my-experts/plugins".into()),
+            agent_deploy_kind: Some(AgentDeployKind::ExpertPlugin),
+            additional_agent_scan_dirs: vec![],
+            builtin_agent_names: &[],
+        },
+        ToolAdapter {
+            key: "dsh".into(),
+            display_name: "DSH".into(),
+            // DSH reads user skills from ~/.dsh/skills (standard SKILL.md
+            // directories). Like WorkBuddy it has no dedicated agents
+            // directory, so agents are distributed skill-wrapped.
+            relative_skills_dir: ".dsh/skills".into(),
+            relative_detect_dir: ".dsh".into(),
+            additional_scan_dirs: vec![],
+            override_skills_dir: None,
+            category: ToolCategory::Coding,
+            is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
+            relative_agents_dir: Some(".dsh/skills".into()),
+            agent_deploy_kind: Some(AgentDeployKind::SkillWrapped),
+            additional_agent_scan_dirs: vec![],
+            builtin_agent_names: &[],
         },
     ]
 }
@@ -814,6 +984,7 @@ pub fn all_tool_adapters(store: &crate::core::skill_store::SkillStore) -> Vec<To
             is_custom: true,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         });
     }
 
@@ -851,6 +1022,7 @@ pub fn find_adapter_with_store(
             is_custom: true,
             recursive_scan: false,
             project_relative_skills_dir: None,
+            ..Default::default()
         })
 }
 
@@ -905,5 +1077,19 @@ mod tests {
         assert_eq!(adapter.relative_skills_dir, ".config/opencode/skills");
         // Project path under workspace: .opencode/skills
         assert_eq!(adapter.project_relative_skills_dir(), ".opencode/skills");
+    }
+
+    #[test]
+    fn workbuddy_uses_user_skills_path_not_marketplace_cache() {
+        let adapter = default_tool_adapters()
+            .into_iter()
+            .find(|adapter| adapter.key == "workbuddy")
+            .expect("WorkBuddy adapter should exist");
+
+        assert_eq!(adapter.relative_skills_dir, ".workbuddy/skills");
+        assert_ne!(
+            adapter.relative_skills_dir,
+            ".workbuddy/skills-marketplace/skills"
+        );
     }
 }

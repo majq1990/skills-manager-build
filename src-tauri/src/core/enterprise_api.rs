@@ -114,12 +114,59 @@ impl EnterpriseApi {
     }
 
     fn build_client_with_timeout(timeout: std::time::Duration) -> reqwest::blocking::Client {
-        reqwest::blocking::Client::builder()
+        let mut builder = reqwest::blocking::Client::builder()
             .user_agent("skills-manager")
+            // The enterprise gateway sits behind OpenResty/nginx and only proxies
+            // HTTP/1.1 upstream. Some Windows TLS stacks see connection resets
+            // during ALPN negotiation for package downloads, so keep this client
+            // on HTTP/1.1 explicitly.
+            .http1_only()
             .connect_timeout(std::time::Duration::from_secs(15))
-            .timeout(timeout)
-            .build()
-            .unwrap_or_default()
+            .timeout(timeout);
+        // reqwest only honors HTTP(S)_PROXY env vars, while browsers and curl
+        // also follow the Windows system proxy (e.g. v2rayN 系统代理). When no
+        // env proxy is set, fall back to the OS proxy so the app can reach the
+        // enterprise gateway through the machine's proxy like everything else.
+        #[cfg(windows)]
+        if std::env::var_os("HTTPS_PROXY").is_none()
+            && std::env::var_os("HTTP_PROXY").is_none()
+        {
+            if let Some(proxy) = Self::windows_system_proxy() {
+                if let Ok(proxy) = reqwest::Proxy::all(format!("http://{proxy}")) {
+                    builder = builder.proxy(proxy);
+                }
+            }
+        }
+        builder.build().unwrap_or_default()
+    }
+
+    /// Read the Windows system proxy (registry `ProxyServer` under Internet
+    /// Settings). Returns the `host:port` of the HTTPS proxy, or `None` when
+    /// the OS proxy is disabled or absent.
+    #[cfg(windows)]
+    fn windows_system_proxy() -> Option<String> {
+        use winreg::enums::HKEY_CURRENT_USER;
+        use winreg::RegKey;
+
+        let hkcu = RegKey::predef(HKEY_CURRENT_USER)
+            .open_subkey("Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings")
+            .ok()?;
+        let enabled: u32 = hkcu.get_value("ProxyEnable").unwrap_or(0);
+        if enabled == 0 {
+            return None;
+        }
+        let server: String = hkcu.get_value("ProxyServer").unwrap_or_default();
+        if server.is_empty() {
+            return None;
+        }
+        // ProxyServer may be "host:port" or "http=host:p;https=host:p".
+        let https = server
+            .split(';')
+            .find_map(|entry| entry.strip_prefix("https="))
+            .or_else(|| server.split(';').find(|entry| !entry.contains('=')));
+        https
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
     }
 
     fn build_client() -> reqwest::blocking::Client {

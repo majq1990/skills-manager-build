@@ -980,6 +980,20 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            // Agents
+            commands::agents::get_agents,
+            commands::agents::get_agent_document,
+            commands::agents::scan_agent_files,
+            commands::agents::import_agent,
+            commands::agents::import_agents_from_dir,
+            commands::agents::import_agent_files,
+            commands::agents::sync_agent_to_tool,
+            commands::agents::unsync_agent_from_tool,
+            commands::agents::generate_agent_variant,
+            commands::agents::export_agent,
+            commands::agents::delete_agent,
+            commands::agents::set_agent_enabled,
+            commands::agents::get_agents_root,
             // Tools
             commands::tools::get_tool_status,
             commands::tools::set_tool_enabled,
@@ -1126,6 +1140,11 @@ pub fn run() {
             commands::presets::apply_preset_to_coding_agents,
             commands::presets::add_skill_to_preset,
             commands::presets::remove_skill_from_preset,
+            commands::presets::add_agent_to_preset,
+            commands::presets::remove_agent_from_preset,
+            commands::presets::get_preset_agents,
+            commands::presets::get_agent_preset_tool_toggles,
+            commands::presets::set_agent_preset_tool_enabled,
             commands::presets::reorder_presets,
             commands::projects::reorder_projects,
             commands::presets::get_preset_skill_order,

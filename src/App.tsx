@@ -15,6 +15,7 @@ import { ProjectDetail } from "./views/ProjectDetail";
 import { EnterpriseMarket } from "./views/EnterpriseMarket";
 import { McpMarket } from "./views/McpMarket";
 import { Memory } from "./views/Memory";
+import { AgentsLibrary } from "./components/AgentsLibrary";
 
 function ThemedToaster() {
   const { resolvedTheme } = useThemeContext();
@@ -41,6 +42,7 @@ function App() {
           <Routes>
             <Route element={<Layout />}>
               <Route path="/" element={<Dashboard />} />
+              <Route path="/agents" element={<AgentsLibrary />} />
               <Route path="/my-skills" element={<MySkills />} />
               <Route path="/global-workspace" element={<WorkspaceView config={CODING_WORKSPACE_CONFIG} />} />
               <Route path="/global-workspace/:agentKey" element={<WorkspaceView config={CODING_WORKSPACE_CONFIG} />} />

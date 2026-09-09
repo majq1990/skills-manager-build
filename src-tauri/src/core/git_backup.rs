@@ -189,6 +189,9 @@ pub(crate) fn init_repo_unlocked(skills_dir: &Path) -> Result<()> {
         &["commit", "-m", "Initial skill library snapshot"],
     )?;
 
+    // Mirror: bring the agents library under version control too.
+    with_agent_repo("init", ensure_agent_repo);
+
     Ok(())
 }
 
@@ -224,6 +227,19 @@ pub(crate) fn set_remote_unlocked(skills_dir: &Path, url: &str) -> Result<()> {
         ],
     );
 
+    // Mirror: point the agents repo at the same remote.
+    with_agent_repo("set-remote", |dir| {
+        ensure_agent_repo(dir)?;
+        let has_remote = run_git(dir, &["remote", "get-url", "origin"]).is_ok();
+        if has_remote {
+            run_git_checked(dir, &["remote", "set-url", "origin", url])?;
+        } else {
+            run_git_checked(dir, &["remote", "add", "origin", url])?;
+        }
+        let _ = run_git(dir, &["fetch", "origin"]);
+        Ok(())
+    });
+
     Ok(())
 }
 
@@ -247,6 +263,13 @@ pub(crate) fn commit_all_unlocked(skills_dir: &Path, message: &str) -> Result<()
     }
 
     run_git_checked(skills_dir, &["commit", "-m", message])?;
+
+    // Mirror: commit agent library changes under the same message.
+    with_agent_repo("commit", |dir| {
+        ensure_agent_repo(dir)?;
+        commit_agent_all_if_dirty(dir, message)
+    });
+
     Ok(())
 }
 
@@ -267,6 +290,9 @@ pub(crate) fn push_unlocked(skills_dir: &Path) -> Result<()> {
     if result.is_err() {
         run_git_checked(skills_dir, &["push", "-u", "origin", &branch])?;
     }
+
+    // Mirror: push the agents repo (branch + missing snapshot tags).
+    with_agent_repo("push", push_agent_repo);
 
     // Snapshot tags are lightweight (by design), so `--follow-tags` will not include them.
     // Push only missing snapshot tags in a single network round-trip.
@@ -327,6 +353,10 @@ pub(crate) fn pull_unlocked(skills_dir: &Path) -> Result<()> {
 
     run_git_checked(skills_dir, &["fetch", "origin", &branch])?;
     run_git_checked(skills_dir, &["merge", &format!("origin/{branch}")])?;
+
+    // Mirror: pull the agents repo.
+    with_agent_repo("pull", pull_agent_repo);
+
     Ok(())
 }
 
@@ -376,6 +406,17 @@ pub(crate) fn create_snapshot_tag_unlocked(skills_dir: &Path) -> Result<String> 
 
     // Use lightweight tag to avoid requiring git user.name/user.email on client machines.
     run_git_checked(skills_dir, &["tag", &tag])?;
+
+    // Mirror: tag the agents repo at the same point-in-time name so
+    // snapshot restores can align both libraries.
+    let tag_for_agents = tag.clone();
+    with_agent_repo("snapshot", move |dir| {
+        ensure_agent_repo(dir)?;
+        commit_agent_all_if_dirty(dir, &format!("snapshot {tag_for_agents}"))?;
+        let _ = run_git_checked(dir, &["tag", &tag_for_agents]);
+        Ok(())
+    });
+
     Ok(tag)
 }
 
@@ -476,6 +517,36 @@ pub(crate) fn restore_snapshot_version_unlocked(skills_dir: &Path, tag: &str) ->
     match restore_result {
         Ok(()) => {
             cleanup();
+
+            // Mirror: align the agents repo to the same snapshot tag when it
+            // carries one. Best-effort; never blocks the skills restore.
+            let tag_for_agents = tag.to_string();
+            with_agent_repo("restore", move |dir| {
+                if !dir.join(".git").exists() {
+                    return Ok(());
+                }
+                if run_git(dir, &["rev-parse", "-q", "--verify", &format!("refs/tags/{tag_for_agents}")]).is_err()
+                {
+                    return Ok(()); // agents repo has no such snapshot — skip
+                }
+                let status = run_git(dir, &["status", "--porcelain"])?;
+                if status.is_empty() {
+                    run_git_checked(dir, &["read-tree", "--reset", "-u", &tag_for_agents])?;
+                    let changed = run_git(dir, &["status", "--porcelain"])?;
+                    if !changed.is_empty() {
+                        run_git_checked(
+                            dir,
+                            &[
+                                "commit",
+                                "-m",
+                                &format!("restore: switch agents library to {tag_for_agents}"),
+                            ],
+                        )?;
+                    }
+                }
+                Ok(())
+            });
+
             Ok(())
         }
         Err(err) => {
@@ -717,6 +788,110 @@ where
 {
     let _lock = RepoLock::acquire(operation)?;
     f()
+}
+
+// ── Agents repo mirror ────────────────────────────────────────────────────
+//
+// The skills library backup treats `~/.skills-manager/skills/` as a git repo
+// root. The agent library (`~/.skills-manager/agents/`, design spec §9) is
+// mirrored as an independent sibling repo: every backup entry point runs the
+// same operation against it best-effort, so an agents-side hiccup can never
+// block or corrupt the primary skills backup. Restores align by snapshot tag
+// name when the agents repo carries the same tag.
+
+fn with_agent_repo<T>(action: &str, f: impl FnOnce(&Path) -> Result<T>) -> Option<T> {
+    let dir = crate::core::central_repo::agents_dir();
+    if !dir.is_dir() {
+        return None;
+    }
+    match f(&dir) {
+        Ok(value) => Some(value),
+        Err(err) => {
+            log::warn!("agents repo {action} failed (skills repo unaffected): {err:#}");
+            None
+        }
+    }
+}
+
+/// Initialize the agents repo on first use (no-op when already a repo or
+/// when the directory is still empty).
+fn ensure_agent_repo(dir: &Path) -> Result<()> {
+    if dir.join(".git").exists() {
+        return Ok(());
+    }
+    let has_entries = std::fs::read_dir(dir)?.next().is_some();
+    if !has_entries {
+        return Ok(());
+    }
+    run_git_checked(dir, &["init"])?;
+    run_git_checked(dir, &["checkout", "-b", "main"])?;
+    ensure_gitignore(dir)?;
+    run_git_checked(dir, &["add", "-A"])?;
+    run_git_checked(dir, &["commit", "-m", "Initial agent library snapshot"])?;
+    Ok(())
+}
+
+fn commit_agent_all_if_dirty(dir: &Path, message: &str) -> Result<()> {
+    ensure_gitignore(dir)?;
+    run_git_checked(dir, &["add", "-A"])?;
+    let status = run_git(dir, &["status", "--porcelain"])?;
+    if status.is_empty() {
+        return Ok(());
+    }
+    run_git_checked(dir, &["commit", "-m", message])?;
+    Ok(())
+}
+
+fn push_agent_repo(dir: &Path) -> Result<()> {
+    if !dir.join(".git").exists() {
+        return Ok(());
+    }
+    if run_git(dir, &["remote", "get-url", "origin"]).is_err() {
+        return Ok(());
+    }
+    // Carry uncommitted agent changes into the push.
+    commit_agent_all_if_dirty(dir, "chore: sync agent library")?;
+    let branch = run_git(dir, &["rev-parse", "--abbrev-ref", "HEAD"])
+        .unwrap_or_else(|_| "main".to_string());
+    if run_git(dir, &["push"]).is_err() {
+        run_git_checked(dir, &["push", "-u", "origin", &branch])?;
+    }
+    // Push snapshot tags missing on the remote (mirrors the skills logic).
+    let local_tags: Vec<String> = run_git(dir, &["tag", "--list", "sm-v-*"])?
+        .lines()
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .map(ToOwned::to_owned)
+        .collect();
+    if local_tags.is_empty() {
+        return Ok(());
+    }
+    let remote_raw = run_git(dir, &["ls-remote", "--tags", "--refs", "origin", "sm-v-*"])
+        .unwrap_or_default();
+    let remote_tags: std::collections::HashSet<String> = remote_raw
+        .lines()
+        .filter_map(|line| line.split_whitespace().nth(1))
+        .filter_map(|ref_: &str| ref_.strip_prefix("refs/tags/"))
+        .map(ToOwned::to_owned)
+        .collect();
+    for tag in local_tags.iter().filter(|t| !remote_tags.contains(*t)) {
+        let _ = run_git(dir, &["push", "origin", &format!("refs/tags/{tag}")]);
+    }
+    Ok(())
+}
+
+fn pull_agent_repo(dir: &Path) -> Result<()> {
+    if !dir.join(".git").exists() {
+        return Ok(());
+    }
+    if run_git(dir, &["remote", "get-url", "origin"]).is_err() {
+        return Ok(());
+    }
+    let branch = run_git(dir, &["rev-parse", "--abbrev-ref", "HEAD"])
+        .unwrap_or_else(|_| "main".to_string());
+    run_git_checked(dir, &["fetch", "origin", &branch])?;
+    run_git_checked(dir, &["merge", &format!("origin/{branch}")])?;
+    Ok(())
 }
 
 fn run_git(dir: &Path, args: &[&str]) -> Result<String> {

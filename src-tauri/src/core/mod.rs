@@ -1,4 +1,7 @@
 pub mod app_state;
+pub mod agent_service;
+pub mod agent_store;
+pub mod agent_variant;
 pub mod audit_log;
 pub mod central_repo;
 pub mod content_hash;

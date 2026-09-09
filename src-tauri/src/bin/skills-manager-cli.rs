@@ -34,6 +34,60 @@ enum Commands {
     Git(GitArgs),
     /// Unified agent-memory operations (provider registry, migrate, sync, doctor).
     Memory(MemoryArgs),
+    /// Agent definition distribution (import, variants, per-tool deploy).
+    Agents(AgentsArgs),
+}
+
+#[derive(Args, Debug)]
+struct AgentsArgs {
+    #[command(subcommand)]
+    command: AgentsCommand,
+}
+
+#[derive(Subcommand, Debug)]
+enum AgentsCommand {
+    /// List centrally managed agents with their deployment targets.
+    List,
+    /// Show one agent's canonical document and variant inventory.
+    Show { id: String },
+    /// Import an agent definition file (.md / .toml / SKILL.md) for a tool.
+    Import {
+        path: PathBuf,
+        #[arg(long)]
+        tool: String,
+    },
+    /// Import every agent definition under a directory for a tool.
+    ImportDir {
+        dir: PathBuf,
+        #[arg(long)]
+        tool: String,
+    },
+    /// Explicitly generate a tool variant from the canonical AGENT.md.
+    GenVariant {
+        id: String,
+        #[arg(long)]
+        tool: String,
+    },
+    /// Export the canonical definition (as `<id>.md`) to a directory.
+    Export {
+        id: String,
+        #[arg(long)]
+        dest: PathBuf,
+    },
+    /// Deploy an agent to a tool.
+    Sync {
+        id: String,
+        #[arg(long)]
+        tool: String,
+    },
+    /// Remove a previously deployed agent from a tool.
+    Unsync {
+        id: String,
+        #[arg(long)]
+        tool: String,
+    },
+    /// Delete an agent, its deployments, and its central directory.
+    Delete { id: String },
 }
 
 #[derive(Args, Debug)]
@@ -186,6 +240,16 @@ struct PresetArgs {
 enum PresetCommand {
     List,
     Current,
+    /// Create a new preset and make it the active one.
+    Create {
+        name: String,
+        /// Optional preset description.
+        #[arg(long)]
+        description: Option<String>,
+        /// Optional preset icon.
+        #[arg(long)]
+        icon: Option<String>,
+    },
     Preview {
         reference: String,
     },
@@ -204,6 +268,18 @@ enum PresetCommand {
     RemoveSkill {
         preset: String,
         skills: Vec<String>,
+    },
+    /// List the agents in a preset.
+    Agents { preset: String },
+    /// Add agent(s) to a preset (membership only; deployed on preset apply).
+    AddAgent {
+        preset: String,
+        agents: Vec<String>,
+    },
+    /// Remove agent(s) from a preset (membership only).
+    RemoveAgent {
+        preset: String,
+        agents: Vec<String>,
     },
 }
 
@@ -330,6 +406,7 @@ struct PresetInfo {
     icon: Option<String>,
     sort_order: i32,
     skill_count: usize,
+    agent_count: usize,
     active: bool,
 }
 
@@ -505,12 +582,13 @@ fn run(cli: Cli) -> anyhow::Result<()> {
     let store = app_state::initialize_cli_store()?;
 
     match cli.command {
-        Commands::Repo(args) => run_repo(args, &store, cli.json),
-        Commands::Tools(args) => run_tools(args, &store, cli.json),
-        Commands::Skills(args) => run_skills(args, &store, cli.json),
-        Commands::Presets(args) => run_presets(args, &store, cli.json),
-        Commands::Git(args) => run_git(args, cli.skills_root.is_some(), cli.json),
-        Commands::Memory(_) => unreachable!("handled above"),
+    Commands::Repo(args) => run_repo(args, &store, cli.json),
+    Commands::Tools(args) => run_tools(args, &store, cli.json),
+    Commands::Skills(args) => run_skills(args, &store, cli.json),
+    Commands::Presets(args) => run_presets(args, &store, cli.json),
+    Commands::Git(args) => run_git(args, cli.skills_root.is_some(), cli.json),
+    Commands::Memory(_) => unreachable!("handled above"),
+    Commands::Agents(args) => run_agents(args, &store, cli.json),
     }
 }
 
@@ -550,6 +628,138 @@ fn repo_status(store: &SkillStore) -> RepoStatus {
 fn run_tools(args: ToolsArgs, store: &SkillStore, json: bool) -> anyhow::Result<()> {
     match args.command {
         ToolsCommand::List => print_json(&tool_service::list_tool_info(store), json),
+    }
+    Ok(())
+}
+
+// ── agents ────────────────────────────────────────────────────────────────
+
+/// Accept either an agent UUID or its kebab-case name (agents are referenced
+/// by name in scripts; the GUI always passes UUIDs).
+fn resolve_agent_id(store: &SkillStore, reference: &str) -> anyhow::Result<String> {
+    store
+        .get_agent_by_id(reference)
+        .ok()
+        .flatten()
+        .map(|agent| agent.id)
+        .or_else(|| {
+            store
+                .get_agent_by_name(reference)
+                .ok()
+                .flatten()
+                .map(|agent| agent.id)
+        })
+        .ok_or_else(|| anyhow!("agent '{reference}' not found"))
+}
+
+fn agent_with_targets(
+    store: &SkillStore,
+    agent: app_lib::core::agent_store::AgentRecord,
+) -> serde_json::Value {
+    let mut variants: Vec<String> = std::fs::read_dir(&agent.central_path)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|e| e.file_name().to_string_lossy().to_string())
+                .filter(|n| *n != app_lib::core::agent_variant::CANONICAL_FILE_NAME)
+                .filter(|n| n.contains('.'))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    variants.sort();
+
+    serde_json::json!({
+        "id": agent.id,
+        "name": agent.name,
+        "description": agent.description,
+        "central_path": agent.central_path,
+        "enabled": agent.enabled,
+        "variants": variants,
+        "targets": store.get_targets_for_agent(&agent.id).unwrap_or_default(),
+    })
+}
+
+fn run_agents(args: AgentsArgs, store: &SkillStore, json: bool) -> anyhow::Result<()> {
+    use app_lib::core::{agent_service, agent_variant};
+    match args.command {
+        AgentsCommand::List => {
+            let agents: Vec<serde_json::Value> = store
+                .get_all_agents()?
+                .into_iter()
+                .map(|a| agent_with_targets(store, a))
+                .collect();
+            print_json(&agents, json);
+        }
+        AgentsCommand::Show { id } => {
+            let agent = store
+                .get_agent_by_id(&id)
+                .ok()
+                .flatten()
+                .or_else(|| store.get_agent_by_name(&id).ok().flatten())
+                .ok_or_else(|| anyhow!("agent '{id}' not found"))?;
+            let canonical = std::path::Path::new(&agent.central_path)
+                .join(agent_variant::CANONICAL_FILE_NAME);
+            let mut doc = agent_with_targets(store, agent);
+            if let Ok(content) = std::fs::read_to_string(&canonical) {
+                doc["canonical"] = serde_json::Value::String(content);
+            }
+            print_json(&doc, json);
+        }
+        AgentsCommand::Import { path, tool } => {
+            let record = agent_service::import_agent_from_file(store, &tool, &path)?;
+            print_json(&record, json);
+        }
+        AgentsCommand::ImportDir { dir, tool } => {
+            let records = agent_service::import_agents_from_dir(store, &tool, &dir)?;
+            print_json(&records, json);
+        }
+        AgentsCommand::GenVariant { id, tool } => {
+            let agent_id = resolve_agent_id(store, &id)?;
+            let path = agent_service::generate_agent_variant_file(store, &agent_id, &tool)?;
+            print_json(
+                &serde_json::json!({"ok": true, "variant": path}),
+                json,
+            );
+        }
+        AgentsCommand::Export { id, dest } => {
+            let agent_id = resolve_agent_id(store, &id)?;
+            let path = agent_service::export_agent(store, &agent_id, &dest)?;
+            print_json(
+                &serde_json::json!({"ok": true, "destination": path}),
+                json,
+            );
+        }
+        AgentsCommand::Sync { id, tool } => {
+            let agent_id = resolve_agent_id(store, &id)?;
+            let outcome = {
+                let _lock = RepoLock::acquire("cli agents sync")?;
+                agent_service::sync_agent_to_tool(store, &agent_id, &tool)?
+            };
+            print_json(
+                &serde_json::json!({
+                    "ok": true,
+                    "target": outcome.target_path,
+                    "mode": outcome.mode.as_str(),
+                }),
+                json,
+            );
+        }
+        AgentsCommand::Unsync { id, tool } => {
+            let agent_id = resolve_agent_id(store, &id)?;
+            {
+                let _lock = RepoLock::acquire("cli agents unsync")?;
+                agent_service::unsync_agent_from_tool(store, &agent_id, &tool)?;
+            }
+            print_json(&serde_json::json!({"ok": true}), json);
+        }
+        AgentsCommand::Delete { id } => {
+            let agent_id = resolve_agent_id(store, &id)?;
+            {
+                let _lock = RepoLock::acquire("cli agents delete")?;
+                agent_service::delete_agent_artifact(store, &agent_id)?;
+            }
+            print_json(&serde_json::json!({"ok": true}), json);
+        }
     }
     Ok(())
 }
@@ -1642,6 +1852,41 @@ fn run_presets(args: PresetArgs, store: &SkillStore, json: bool) -> anyhow::Resu
     match args.command {
         PresetCommand::List => print_json(&list_presets(store)?, json),
         PresetCommand::Current => print_json(&current_preset(store)?, json),
+        PresetCommand::Create {
+            name,
+            description,
+            icon,
+        } => {
+            let now = chrono::Utc::now().timestamp_millis();
+            let id = uuid::Uuid::new_v4().to_string();
+            let record = app_lib::core::skill_store::ScenarioRecord {
+                id: id.clone(),
+                name: name.clone(),
+                description: description.clone(),
+                icon: icon.clone(),
+                sort_order: 999,
+                created_at: now,
+                updated_at: now,
+            };
+            {
+                store.insert_scenario(&record)?;
+                store.set_active_scenario(&id)?;
+                sync_metadata::write_all_from_db(store)?;
+            }
+            print_json(
+                &PresetInfo {
+                    id,
+                    name,
+                    description,
+                    icon,
+                    sort_order: 999,
+                    skill_count: 0,
+                    agent_count: 0,
+                    active: true,
+                },
+                json,
+            );
+        }
         PresetCommand::Preview { reference } => {
             let preset = resolve_scenario(store, &reference)?;
             let preview =
@@ -1651,6 +1896,9 @@ fn run_presets(args: PresetArgs, store: &SkillStore, json: bool) -> anyhow::Resu
         PresetCommand::Apply { reference } => {
             let preset = resolve_scenario(store, &reference)?;
             scenario_service::apply_scenario_to_default(store, &preset.id).map_err(map_app_err)?;
+            // Mirror the GUI apply: best-effort deploy of the preset's member
+            // agents. Failures go to stderr and never abort the apply.
+            deploy_preset_agents_best_effort(store, &preset.id)?;
             print_json(&current_preset(store)?, json);
         }
         PresetCommand::Deactivate { reference } => {
@@ -1659,11 +1907,17 @@ fn run_presets(args: PresetArgs, store: &SkillStore, json: bool) -> anyhow::Resu
             let is_active = active.as_deref() == Some(preset.id.as_str());
             let count_before = count_synced_targets_for_preset(store, &preset.id)?;
 
+            // Tear down this preset's agent deployments before any replacement
+            // preset comes up, so agents shared between the two presets end up
+            // (re)deployed by the branch below.
+            unsync_preset_agents(store, &preset.id)?;
+
             if is_active {
                 let next_active = replacement_preset_after_deactivate(store, &preset.id)?;
                 if let Some(next) = next_active.as_ref() {
                     scenario_service::apply_scenario_to_default(store, &next.id)
                         .map_err(map_app_err)?;
+                    deploy_preset_agents_best_effort(store, &next.id)?;
                 } else {
                     scenario_service::unsync_scenario_skills(store, &preset.id)
                         .map_err(map_app_err)?;
@@ -1678,6 +1932,9 @@ fn run_presets(args: PresetArgs, store: &SkillStore, json: bool) -> anyhow::Resu
                 if let Some(active_id) = active.as_deref() {
                     scenario_service::sync_scenario_skills(store, active_id)
                         .map_err(map_app_err)?;
+                    // Restore agents shared between the closed preset and the
+                    // still-active one.
+                    deploy_preset_agents_best_effort(store, active_id)?;
                 }
             }
 
@@ -1747,6 +2004,65 @@ fn run_presets(args: PresetArgs, store: &SkillStore, json: bool) -> anyhow::Resu
                 json,
             );
         }
+        PresetCommand::Agents { preset } => {
+            let s = resolve_scenario(store, &preset)?;
+            let agents: Vec<serde_json::Value> = store
+                .get_agents_for_scenario(&s.id)?
+                .into_iter()
+                .map(|a| agent_with_targets(store, a))
+                .collect();
+            print_json(&agents, json);
+        }
+        PresetCommand::AddAgent { preset, agents } => {
+            let s = resolve_scenario(store, &preset)?;
+            let mut added = Vec::new();
+            let mut missing = Vec::new();
+            for r in agents {
+                match resolve_agent(store, &r) {
+                    Some(agent) => {
+                        store.add_agent_to_scenario(&s.id, &agent.id)?;
+                        added.push(agent.name);
+                    }
+                    None => missing.push(r),
+                }
+            }
+            sync_metadata::write_all_from_db(store)?;
+            print_json(
+                &PresetMembershipReport {
+                    preset_id: s.id,
+                    preset_name: s.name,
+                    added,
+                    removed: Vec::new(),
+                    missing,
+                },
+                json,
+            );
+        }
+        PresetCommand::RemoveAgent { preset, agents } => {
+            let s = resolve_scenario(store, &preset)?;
+            let mut removed = Vec::new();
+            let mut missing = Vec::new();
+            for r in agents {
+                match resolve_agent(store, &r) {
+                    Some(agent) => {
+                        store.remove_agent_from_scenario(&s.id, &agent.id)?;
+                        removed.push(agent.name);
+                    }
+                    None => missing.push(r),
+                }
+            }
+            sync_metadata::write_all_from_db(store)?;
+            print_json(
+                &PresetMembershipReport {
+                    preset_id: s.id,
+                    preset_name: s.name,
+                    added: Vec::new(),
+                    removed,
+                    missing,
+                },
+                json,
+            );
+        }
     }
     Ok(())
 }
@@ -1759,6 +2075,10 @@ fn list_presets(store: &SkillStore) -> anyhow::Result<Vec<PresetInfo>> {
         .map(|scenario| PresetInfo {
             skill_count: store
                 .get_skill_ids_for_scenario(&scenario.id)
+                .unwrap_or_default()
+                .len(),
+            agent_count: store
+                .get_agent_ids_for_scenario(&scenario.id)
                 .unwrap_or_default()
                 .len(),
             active: active.as_deref() == Some(scenario.id.as_str()),
@@ -1826,6 +2146,50 @@ fn resolve_scenario(
         0 => Err(anyhow!("preset not found: {reference}")),
         _ => Err(anyhow!("preset reference is ambiguous: {reference}")),
     }
+}
+
+fn resolve_agent(
+    store: &SkillStore,
+    reference: &str,
+) -> Option<app_lib::core::agent_store::AgentRecord> {
+    store
+        .get_agent_by_id(reference)
+        .ok()
+        .flatten()
+        .or_else(|| store.get_agent_by_name(reference).ok().flatten())
+}
+
+/// Best-effort deploy of a preset's member agents (mirrors the GUI apply).
+/// Per-(agent, tool) failures are reported on stderr only.
+fn deploy_preset_agents_best_effort(store: &SkillStore, preset_id: &str) -> anyhow::Result<()> {
+    let attempts = {
+        let _lock = RepoLock::acquire("cli preset agents deploy")?;
+        app_lib::core::agent_service::sync_agent_scenario(store, preset_id)
+    };
+    for attempt in attempts.iter().filter(|a| !a.ok) {
+        eprintln!(
+            "agent deploy skipped: {} -> {}: {}",
+            attempt.agent_name,
+            attempt.tool,
+            attempt.error.as_deref().unwrap_or("unknown")
+        );
+    }
+    if !attempts.is_empty() {
+        let ok = attempts.iter().filter(|a| a.ok).count();
+        eprintln!(
+            "preset agents: {ok} deployed, {} skipped",
+            attempts.len() - ok
+        );
+    }
+    Ok(())
+}
+
+/// Remove the recorded agent deployments of a preset's members. Only
+/// self-deployed paths are touched, mirroring the skills teardown.
+fn unsync_preset_agents(store: &SkillStore, preset_id: &str) -> anyhow::Result<()> {
+    let _lock = RepoLock::acquire("cli preset agents unsync")?;
+    app_lib::core::agent_service::unsync_agent_scenario(store, preset_id);
+    Ok(())
 }
 
 // ── git ───────────────────────────────────────────────────────────────────

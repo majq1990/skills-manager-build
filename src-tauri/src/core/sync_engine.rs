@@ -114,6 +114,80 @@ pub fn sync_skill(source: &Path, target: &Path, mode: SyncMode) -> Result<SyncMo
     }
 }
 
+/// Deploy a single agent definition file (opencode `*.md`, codex `*.toml`)
+/// to `<tool agents_dir>/<agent-id>.<ext>`.
+///
+/// Mirrors [`sync_skill`] at file granularity: symlink mode links the file
+/// into the tool's agents directory (falling back to a plain copy where
+/// symlinks are unavailable, e.g. Windows without Developer Mode), copy
+/// mode writes the file directly. Freshness for copy mode reuses the
+/// stored-vs-current source hash comparison (issue #153 semantics).
+pub fn sync_agent_file(
+    source: &Path,
+    target: &Path,
+    mode: SyncMode,
+    last_synced_source_hash: Option<&str>,
+    current_source_hash: Option<&str>,
+) -> Result<SyncMode> {
+    if is_target_current(source, target, mode, last_synced_source_hash, current_source_hash) {
+        return Ok(mode);
+    }
+
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("Failed to create parent dir {:?}", parent))?;
+    }
+
+    ensure_dst_not_inside_src(source, target)?;
+    remove_target(target).ok();
+
+    match mode {
+        SyncMode::Symlink => {
+            #[cfg(unix)]
+            {
+                std::os::unix::fs::symlink(source, target).with_context(|| {
+                    format!("Failed to create symlink {:?} -> {:?}", target, source)
+                })?;
+                Ok(SyncMode::Symlink)
+            }
+            #[cfg(windows)]
+            {
+                match std::os::windows::fs::symlink_file(source, target) {
+                    Ok(()) => Ok(SyncMode::Symlink),
+                    Err(err) => {
+                        log::warn!(
+                            "symlink_file {:?} -> {:?} failed, falling back to copy: {err}",
+                            target,
+                            source
+                        );
+                        std::fs::copy(source, target)
+                            .with_context(|| format!("copying {:?} -> {:?}", source, target))?;
+                        Ok(SyncMode::Copy)
+                    }
+                }
+            }
+            #[cfg(all(not(unix), not(windows)))]
+            {
+                std::fs::copy(source, target)?;
+                Ok(SyncMode::Copy)
+            }
+        }
+        SyncMode::Copy => {
+            std::fs::copy(source, target)
+                .with_context(|| format!("copying {:?} -> {:?}", source, target))?;
+            Ok(SyncMode::Copy)
+        }
+    }
+}
+
+/// Remove a deployed agent artifact: a single file (File kind) or the
+/// skill-wrapped directory. Only ever called with paths recorded in
+/// `agent_targets` — never scans or deletes anything else in the tool's
+/// directories (built-in agents are untouchable by construction).
+pub fn remove_agent_target(target: &Path) -> Result<()> {
+    remove_target(target)
+}
+
 /// Decide whether the existing target is already in the desired state.
 ///
 /// - **Symlink mode**: the target must be a symlink pointing at `source`.
@@ -581,5 +655,77 @@ mod tests {
         ));
         // Both missing → must resync.
         assert!(!is_target_current(&src, &tgt, SyncMode::Copy, None, None));
+    }
+
+    // ── sync_agent_file ──
+
+    #[test]
+    fn sync_agent_file_copy_writes_content() {
+        let tmp = tempdir().unwrap();
+        let src = tmp.path().join("reviewer.md");
+        fs::write(&src, "agent body").unwrap();
+        let tgt = tmp.path().join("agents").join("reviewer.md");
+
+        let mode = sync_agent_file(&src, &tgt, SyncMode::Copy, None, None).unwrap();
+        assert!(matches!(mode, SyncMode::Copy));
+        assert_eq!(fs::read_to_string(&tgt).unwrap(), "agent body");
+    }
+
+    #[test]
+    fn sync_agent_file_copy_skips_when_hash_unchanged() {
+        let tmp = tempdir().unwrap();
+        let central = tmp.path().join("central");
+        fs::create_dir_all(&central).unwrap();
+        let src = central.join("reviewer.md");
+        fs::write(&src, "agent body").unwrap();
+        let tgt = tmp.path().join("reviewer.md");
+        fs::write(&tgt, "stale-on-disk-but-hash-recorded").unwrap();
+
+        // Hash matches and target exists → skip (no clobber of user edits).
+        sync_agent_file(&src, &tgt, SyncMode::Copy, Some("h"), Some("h")).unwrap();
+        assert_eq!(fs::read_to_string(&tgt).unwrap(), "stale-on-disk-but-hash-recorded");
+
+        // Hash differs → recopy.
+        sync_agent_file(&src, &tgt, SyncMode::Copy, Some("old"), Some("new")).unwrap();
+        assert_eq!(fs::read_to_string(&tgt).unwrap(), "agent body");
+    }
+
+    #[test]
+    fn sync_agent_file_copy_resyncs_when_target_deleted() {
+        let tmp = tempdir().unwrap();
+        let src = tmp.path().join("reviewer.md");
+        fs::write(&src, "agent body").unwrap();
+        let tgt = tmp.path().join("deleted-by-user.md");
+
+        sync_agent_file(&src, &tgt, SyncMode::Copy, Some("h"), Some("h")).unwrap();
+        assert_eq!(fs::read_to_string(&tgt).unwrap(), "agent body");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sync_agent_file_symlink_links_source() {
+        let tmp = tempdir().unwrap();
+        let src = tmp.path().join("reviewer.md");
+        fs::write(&src, "agent body").unwrap();
+        let tgt = tmp.path().join("reviewer-link.md");
+
+        let mode = sync_agent_file(&src, &tgt, SyncMode::Symlink, None, None).unwrap();
+        assert!(matches!(mode, SyncMode::Symlink));
+        assert!(tgt.is_symlink());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn sync_agent_file_symlink_falls_back_or_links() {
+        let tmp = tempdir().unwrap();
+        let src = tmp.path().join("reviewer.md");
+        fs::write(&src, "agent body").unwrap();
+        let tgt = tmp.path().join("reviewer-link.md");
+
+        let mode = sync_agent_file(&src, &tgt, SyncMode::Symlink, None, None).unwrap();
+        match mode {
+            SyncMode::Symlink => assert!(tgt.is_symlink()),
+            SyncMode::Copy => assert_eq!(fs::read_to_string(&tgt).unwrap(), "agent body"),
+        }
     }
 }

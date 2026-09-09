@@ -583,7 +583,12 @@
     "trayIconDesc": "在系统托盘中显示图标，便于快速执行显示和退出操作。",
     "trayIcon_on": "显示",
     "trayIcon_off": "隐藏",
-    "trayIconOffHint": "托盘图标已隐藏，关闭窗口时将直接退出应用。"
+    "trayIconOffHint": "托盘图标已隐藏，关闭窗口时将直接退出应用。",
+    "agentBuiltinTitle": "Agent 内置保护",
+    "agentBuiltinNames": "额外内置 Agent 名",
+    "agentBuiltinDesc": "与内置 Agent 同名的自定义 Agent 会被拒绝部署（永不覆盖工具自带 Agent）。opencode 已内置 general / explore / review / plan / build，此处可追加其他工具未来新增的内置名，逗号分隔。",
+    "agentBuiltinPlaceholder": "例如：helper, planner",
+    "agentBuiltinSaved": "内置保护名单已保存"
   },
   "closeAction": {
     "title": "关闭行为",
@@ -908,7 +913,8 @@
     "failed": "反馈提交失败",
     "required": "标题和详细描述为必填",
     "needLogin": "请先在『企业技能』页登录后再反馈",
-    "feedbackBtn": "反馈"
+    "feedbackBtn": "反馈",
+    "relatedAgent": "关联 Agent"
   },
   "publish": {
     "title": "发布到企业",
@@ -997,5 +1003,26 @@
       "copied_to_clipboard": "配置已复制到剪贴板",
       "copy_error": "复制失败"
     }
+  },
+  "agentLib": {
+    "nav": "Agent库",
+    "title": "Agents 库",
+    "import": "从工具导入",
+    "importTitle": "从工具目录导入 Agent",
+    "imported": "已导入",
+    "importAll": "全部导入",
+    "noScanResults": "未发现可导入的 Agent 文件",
+    "empty": "还没有纳管的 Agent，点击「从工具导入」收编现有定义",
+    "deploySection": "分发到工具",
+    "missingVariant": "缺 variant，先生成",
+    "genVariant": "生成 variant",
+    "synced": "已分发",
+    "unsynced": "已卸载",
+    "variantGenerated": "variant 已生成",
+    "deleted": "Agent 已删除",
+    "deleteConfirm": "删除 Agent「{{name}}」？将同时卸载其在所有工具上的部署。",
+    "presetSection": "Preset 归属",
+    "noPresets": "暂无 Preset",
+    "upload": "上传 Agent"
   }
 }

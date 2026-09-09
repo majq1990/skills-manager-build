@@ -189,7 +189,13 @@ mod tests {
         let entries = list_content_files(tmp.path());
         let rels: Vec<_> = entries.iter().map(|e| e.relative_path.clone()).collect();
         // Sorted by path, ignore-listed files excluded, subdirs included.
-        assert_eq!(rels, vec!["a.txt", "b.txt", "sub/c.md"]);
+        // `relative_path` keeps the platform separator (it feeds the hash).
+        let expected: Vec<String> = if cfg!(windows) {
+            vec!["a.txt".into(), "b.txt".into(), "sub\\c.md".into()]
+        } else {
+            vec!["a.txt".into(), "b.txt".into(), "sub/c.md".into()]
+        };
+        assert_eq!(rels, expected);
     }
 
     #[cfg(unix)]

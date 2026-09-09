@@ -18,6 +18,7 @@ import {
   Building2,
   Server,
   Brain,
+  Bot,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
@@ -169,6 +170,7 @@ export function Sidebar() {
   const NAV_ITEMS = [
     { name: t("sidebar.dashboard"), path: "/", icon: LayoutDashboard },
     { name: t("sidebar.mySkills"), path: "/my-skills", icon: Layers },
+    { name: t("agents.nav"), path: "/agents", icon: Bot },
     { name: t("sidebar.installSkills"), path: "/install", icon: Download },
     { name: t("enterprise.title") || "Enterprise", path: "/enterprise", icon: Building2 },
     { name: "MCP Market", path: "/mcp-market", icon: Server },
@@ -481,7 +483,20 @@ export function Sidebar() {
                                     <PresetIcon className="h-3 w-3" />
                                   </span>
                                   <span className="flex-1 truncate">{preset.name}</span>
-                                  <span className="ml-auto flex h-[18px] w-[32px] shrink-0 items-center justify-end group-hover:hidden">
+                                  <span className="ml-auto flex h-[18px] shrink-0 items-center justify-end gap-1 group-hover:hidden">
+                                    {(preset.agent_count ?? 0) > 0 && (
+                                      <span
+                                        title="Agents"
+                                        className={cn(
+                                          "min-w-[18px] rounded-full px-1.5 text-center text-[12px] font-medium leading-[18px] tabular-nums",
+                                          isActive
+                                            ? "bg-emerald-500/20 text-emerald-300"
+                                            : "bg-emerald-500/10 text-emerald-600"
+                                        )}
+                                      >
+                                        {preset.agent_count}
+                                      </span>
+                                    )}
                                     {preset.skill_count > 0 && (
                                       <span
                                         className={cn(

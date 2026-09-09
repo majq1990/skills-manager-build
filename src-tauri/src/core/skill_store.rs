@@ -15,6 +15,14 @@ pub struct SkillStore {
     secret_key: [u8; 32],
 }
 
+impl SkillStore {
+    /// Crate-internal access to the shared connection for feature modules
+    /// (e.g. `agent_store`) that extend the store with their own tables.
+    pub(crate) fn conn(&self) -> &Mutex<Connection> {
+        &self.conn
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct SkillRecord {
     pub id: String,
@@ -121,6 +129,16 @@ impl SkillStore {
         Ok(Self {
             conn: Mutex::new(conn),
             secret_key,
+        })
+    }
+
+    /// Wrap an existing connection (used by tests to build stores over
+    /// in-memory databases with migrations already applied). The secret key
+    /// is zeroed because encrypted settings are never exercised in tests.
+    pub fn from_connection(conn: Connection) -> Result<Self> {
+        Ok(Self {
+            conn: Mutex::new(conn),
+            secret_key: [0u8; 32],
         })
     }
 

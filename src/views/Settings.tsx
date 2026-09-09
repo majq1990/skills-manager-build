@@ -192,6 +192,8 @@ export function Settings() {
   const [gitRemoteSaving, setGitRemoteSaving] = useState(false);
   const [proxyInput, setProxyInput] = useState("");
   const [proxySaving, setProxySaving] = useState(false);
+  const [extraBuiltinAgentsInput, setExtraBuiltinAgentsInput] = useState("");
+  const [builtinAgentsSaving, setBuiltinAgentsSaving] = useState(false);
   const [textSize, setTextSize] = useState("default");
   const [autoUpdateInterval, setAutoUpdateInterval] = useState("off");
   const [autoUpdateApply, setAutoUpdateApply] = useState("off");
@@ -323,6 +325,15 @@ export function Settings() {
     api.getSettings("sync_mode").then((v) => { if (v) setSyncMode(v); });
     api.getSettings("default_scenario").then((v) => { if (v) setDefaultPreset(v); });
     api.getSettings("proxy_url").then((v) => { setProxyInput(v ?? ""); });
+    api.getSettings("extra_builtin_agent_names").then((v) => {
+      if (!v) { setExtraBuiltinAgentsInput(""); return; }
+      try {
+        const names = JSON.parse(v);
+        setExtraBuiltinAgentsInput(Array.isArray(names) ? names.join(", ") : "");
+      } catch {
+        setExtraBuiltinAgentsInput("");
+      }
+    });
     api.getSettings("close_action").then((v) => { setCloseAction(v ?? ""); });
     api.getSettings("show_tray_icon").then((v) => {
       const normalized = (v ?? "true").trim().toLowerCase();
@@ -695,6 +706,22 @@ export function Settings() {
       toast.error(t("common.error"));
     } finally {
       setProxySaving(false);
+    }
+  };
+
+  const handleSaveExtraBuiltinAgents = async () => {
+    const names = extraBuiltinAgentsInput
+      .split(/[\s,;]+/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    setBuiltinAgentsSaving(true);
+    try {
+      await api.setSettings("extra_builtin_agent_names", JSON.stringify(names));
+      toast.success(t("settings.agentBuiltinSaved"));
+    } catch {
+      toast.error(t("common.error"));
+    } finally {
+      setBuiltinAgentsSaving(false);
     }
   };
 
@@ -1484,6 +1511,40 @@ export function Settings() {
                   className={`${actionButtonClass} bg-surface-hover hover:bg-surface-active text-tertiary border-border`}
                 >
                   {proxySaving ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <LinkIcon className="w-3 h-3" />
+                  )}
+                  {t("common.save")}
+                </button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* Agent built-in deny list augmentation */}
+        <section>
+          <h2 className="app-section-title mb-3">
+            {t("settings.agentBuiltinTitle")}
+          </h2>
+          <div className="app-panel overflow-hidden divide-y divide-border-subtle">
+            <div className="px-4 py-3">
+              <h3 className="text-[13px] text-secondary font-medium mb-0.5">{t("settings.agentBuiltinNames")}</h3>
+              <p className="text-[13px] text-muted mb-2">{t("settings.agentBuiltinDesc")}</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="text"
+                  value={extraBuiltinAgentsInput}
+                  onChange={(e) => setExtraBuiltinAgentsInput(e.target.value)}
+                  placeholder={t("settings.agentBuiltinPlaceholder")}
+                  className={`${fieldClass} min-w-0 flex-1 font-mono`}
+                />
+                <button
+                  onClick={handleSaveExtraBuiltinAgents}
+                  disabled={builtinAgentsSaving}
+                  className={`${actionButtonClass} bg-surface-hover hover:bg-surface-active text-tertiary border-border`}
+                >
+                  {builtinAgentsSaving ? (
                     <Loader2 className="w-3 h-3 animate-spin" />
                   ) : (
                     <LinkIcon className="w-3 h-3" />

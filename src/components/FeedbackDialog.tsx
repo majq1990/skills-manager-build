@@ -17,10 +17,12 @@ interface Props {
   defaultType?: string;
   /** 关联技能（如 "技能名 v1.2.0"）；传了则显示只读 chip，工具反馈时留空 */
   skill?: string;
+  /** 关联 Agent（传了则显示只读 chip，以 `agent:<name>` 提交给服务端） */
+  agent?: string;
   onClose: () => void;
 }
 
-export function FeedbackDialog({ open, defaultType, skill, onClose }: Props) {
+export function FeedbackDialog({ open, defaultType, skill, agent, onClose }: Props) {
   const { t } = useTranslation();
   const [type, setType] = useState(defaultType || "功能建议");
   const [title, setTitle] = useState("");
@@ -51,11 +53,14 @@ export function FeedbackDialog({ open, defaultType, skill, onClose }: Props) {
         toast.error(t("feedback.needLogin"));
         return;
       }
-      await api.enterpriseSubmitFeedback(type, skill || "", title.trim(), description.trim());
+      const related = agent ? `agent:${agent}` : skill ?? "";
+      await api.enterpriseSubmitFeedback(type, related, title.trim(), description.trim());
       toast.success(t("feedback.success"));
       onClose();
     } catch (err) {
-      const msg = String((err as any)?.message ?? err ?? "");
+      const msg = String(
+        err && typeof err === "object" && "message" in err ? (err as { message: string }).message : err ?? ""
+      );
       if (/not authenticated|\(401\)/i.test(msg)) {
         toast.error(t("feedback.needLogin"));
       } else {
@@ -102,7 +107,7 @@ export function FeedbackDialog({ open, defaultType, skill, onClose }: Props) {
             </select>
           </div>
 
-          {/* 关联技能（只读，技能反馈时显示） */}
+          {/* 关联技能 / Agent（只读，有关联对象时显示） */}
           {skill ? (
             <div>
               <label className="block text-[12px] font-medium text-secondary mb-1">
@@ -110,6 +115,15 @@ export function FeedbackDialog({ open, defaultType, skill, onClose }: Props) {
               </label>
               <div className="px-3 py-2 bg-bg-secondary border border-border-subtle rounded-[4px] text-[13px] text-tertiary truncate">
                 {skill}
+              </div>
+            </div>
+          ) : agent ? (
+            <div>
+              <label className="block text-[12px] font-medium text-secondary mb-1">
+                {t("feedback.relatedAgent")}
+              </label>
+              <div className="px-3 py-2 bg-bg-secondary border border-border-subtle rounded-[4px] text-[13px] text-tertiary truncate">
+                {agent}
               </div>
             </div>
           ) : null}

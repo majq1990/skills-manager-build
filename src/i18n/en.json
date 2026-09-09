@@ -583,7 +583,12 @@
     "trayIconDesc": "Show an icon in the system tray for quick Show and Quit actions.",
     "trayIcon_on": "Show",
     "trayIcon_off": "Hide",
-    "trayIconOffHint": "Tray icon is hidden, so closing the window will quit the app."
+    "trayIconOffHint": "Tray icon is hidden, so closing the window will quit the app.",
+    "agentBuiltinTitle": "Agent built-in protection",
+    "agentBuiltinNames": "Extra built-in agent names",
+    "agentBuiltinDesc": "Custom agents colliding with these names are refused deployment (built-ins are never overwritten). opencode ships general / explore / review / plan / build; append future built-in names here, comma separated.",
+    "agentBuiltinPlaceholder": "e.g.: helper, planner",
+    "agentBuiltinSaved": "Built-in protection list saved"
   },
   "closeAction": {
     "title": "Close behavior",
@@ -908,7 +913,8 @@
     "failed": "Failed to submit feedback",
     "required": "Title and details are required",
     "needLogin": "Please sign in on the Enterprise Skills page first",
-    "feedbackBtn": "Feedback"
+    "feedbackBtn": "Feedback",
+    "relatedAgent": "Related agent"
   },
   "publish": {
     "title": "Publish to Enterprise",
@@ -997,5 +1003,26 @@
       "copied_to_clipboard": "Config copied to clipboard",
       "copy_error": "Copy failed"
     }
+  },
+  "agentLib": {
+    "nav": "Agent Library",
+    "title": "Agents Library",
+    "import": "Import from tools",
+    "importTitle": "Import agents from tool directories",
+    "imported": "Imported",
+    "importAll": "Import all",
+    "noScanResults": "No importable agent files found",
+    "empty": "No managed agents yet - import existing definitions from your tools",
+    "deploySection": "Deploy to tools",
+    "missingVariant": "Variant missing - generate first",
+    "genVariant": "Generate variant",
+    "synced": "Deployed",
+    "unsynced": "Undeployed",
+    "variantGenerated": "Variant generated",
+    "deleted": "Agent deleted",
+    "deleteConfirm": "Delete agent \"{name}\"? Its deployments on all tools will be removed too.",
+    "presetSection": "Preset membership",
+    "noPresets": "No presets yet",
+    "upload": "Upload Agent"
   }
 }

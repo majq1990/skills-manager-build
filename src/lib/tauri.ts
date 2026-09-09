@@ -178,6 +178,7 @@ export interface Preset {
   icon: string | null;
   sort_order: number;
   skill_count: number;
+  agent_count: number;
   created_at: number;
   updated_at: number;
 }
@@ -936,4 +937,132 @@ export const enterpriseUploadSkill = (
     centralPath,
     version: version || null,
     visibility: visibility || null,
+  });
+
+// ── Agents (distribution) ──
+
+export interface AgentTarget {
+  id: string;
+  agent_id: string;
+  tool: string;
+  target_path: string;
+  mode: string;
+  status: string;
+  synced_at: number | null;
+  last_error: string | null;
+  source_hash: string | null;
+}
+
+export interface AgentRecord {
+  id: string;
+  name: string;
+  description: string | null;
+  source_type: string;
+  central_path: string;
+  content_hash: string | null;
+  enabled: boolean;
+}
+
+export interface AgentWithTargets extends AgentRecord {
+  targets: AgentTarget[];
+  variants: string[];
+}
+
+export interface AgentResolution {
+  tool: string;
+  display_name: string;
+  resolved_source: string | null;
+  deployable: boolean;
+}
+
+export interface AgentDocument {
+  content: string;
+  variants: string[];
+  resolution: AgentResolution[];
+}
+
+export interface AgentFileEntry {
+  tool: string;
+  path: string;
+  name_guess: string;
+  imported_agent_id: string | null;
+}
+
+export interface ScanAgentFilesResult {
+  tool: string;
+  display_name: string;
+  files: AgentFileEntry[];
+}
+
+export const getAgents = () => invoke<AgentWithTargets[]>("get_agents");
+
+export const getAgentDocument = (id: string) =>
+  invoke<AgentDocument>("get_agent_document", { id });
+
+export const scanAgentFiles = (tool?: string) =>
+  invoke<ScanAgentFilesResult[]>("scan_agent_files", { tool: tool ?? null });
+
+export const importAgent = (tool: string, path: string) =>
+  invoke<AgentRecord>("import_agent", { tool, path });
+
+export const importAgentsFromDir = (tool: string, dir: string) =>
+  invoke<AgentRecord[]>("import_agents_from_dir", { tool, dir });
+
+export const importAgentFiles = (paths: string[]) =>
+  invoke<AgentRecord[]>("import_agent_files", { paths });
+
+export const syncAgentToTool = (id: string, tool: string) =>
+  invoke<{ target_path: string; mode: string }>("sync_agent_to_tool", { id, tool });
+
+export const unsyncAgentFromTool = (id: string, tool: string) =>
+  invoke<void>("unsync_agent_from_tool", { id, tool });
+
+export const generateAgentVariant = (id: string, tool: string) =>
+  invoke<string>("generate_agent_variant", { id, tool });
+
+export const exportAgent = (id: string, destDir: string) =>
+  invoke<string>("export_agent", { id, destDir });
+
+export const deleteAgent = (id: string) => invoke<void>("delete_agent", { id });
+
+export const setAgentEnabled = (id: string, enabled: boolean) =>
+  invoke<void>("set_agent_enabled", { id, enabled });
+
+export const getAgentsRoot = () => invoke<string>("get_agents_root");
+
+// ── Agent preset membership (P2 混装) ──
+
+export interface AgentPresetToolToggle {
+  tool: string;
+  display_name: string;
+  installed: boolean;
+  enabled: boolean;
+}
+
+export const getPresetAgents = (presetId: string) =>
+  invoke<AgentRecord[]>("get_preset_agents", { presetId });
+
+export const addAgentToPreset = (agentId: string, presetId: string) =>
+  invoke<void>("add_agent_to_preset", { agentId, presetId });
+
+export const removeAgentFromPreset = (agentId: string, presetId: string) =>
+  invoke<void>("remove_agent_from_preset", { agentId, presetId });
+
+export const getAgentPresetToolToggles = (presetId: string, agentId: string) =>
+  invoke<AgentPresetToolToggle[]>("get_agent_preset_tool_toggles", {
+    presetId,
+    agentId,
+  });
+
+export const setAgentPresetToolEnabled = (
+  presetId: string,
+  agentId: string,
+  tool: string,
+  enabled: boolean
+) =>
+  invoke<void>("set_agent_preset_tool_enabled", {
+    presetId,
+    agentId,
+    tool,
+    enabled,
   });
