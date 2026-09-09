@@ -5,6 +5,30 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.25.0] - 2026-09-09
+
+### 发布概览
+- Skills Manager 现在支持 agent 定义的统一管理与跨工具分发，并合入一批上游社区可移植改进。
+
+### 用户可见更新
+- 新增 **Agent 库**：集中管理自定义 agent 定义，分发到 OpenCode（canonical Markdown）、Codex（TOML variant）、WorkBuddy（ExpertPlugin）、DSH（SKILL.md 包装）。支持一键生成 variant、按工具部署开关、从工具导入、文件上传，以及内置 agent 同名冲突保护。
+- Preset 支持混装 agent：应用 preset 时成员 agent 随技能一起部署；侧边栏 preset 行显示 agent 数量徽标。
+- Agent 库打通企业服务器：本地 agent 可发布到企业技能服务器（支持可见性与版本号），企业市场可浏览并一键安装 agent 到本机。
+- 开箱支持 **ZCode**：用户级技能同步到 `~/.zcode/skills/`。
+- **Kimi Code 路径修正**：技能现在写入 kimi-code 真正读取的 `~/.kimi-code/skills/`，不再写入与 Amp、Replit 共用的旧 `.config/agents/skills`。升级后请对 Kimi 重新同步一次。
+- 按名安装来源中不存在的技能时，明确报错，不再把整个仓库当作单个技能复制。
+- 从 tag 钉住的 git 来源安装的技能，不再常驻「检查失败」的更新状态。
+- 反馈模块打通 Agent 库：反馈可关联具体 agent 提交。
+
+### 安全
+- git 来源安装对请求的 subpath 与最终解析目录做路径逃逸校验（`..`、绝对路径、软链逃逸一律拒绝），校验通过才会复制。
+
+### 开发者与治理更新
+- Windows 构建嵌入长路径感知应用清单，开启 `LongPathsEnabled` 后深层嵌套路径的技能安装不再报「path too long」。
+- 首次启动语言跟随系统（zh / zh-TW / en，主子标签精确匹配、显式脚本优先）；已有显式设置不受影响。
+- 修复企业登录在 blocking 调用 panic 后连锁失败的问题，全部企业命令移出 async 线程执行。
+- Windows 更新清单规范化为 NSIS 安装包，1.24.1 老客户端静默升级路径保持可用；补齐更新后自动重启所需的 process 能力声明。
+
 ## [1.24.2] - 2026-08-10
 
 ### 发布概览

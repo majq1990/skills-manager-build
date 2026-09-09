@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.25.0] - 2026-09-09
+
+### Release Overview
+- Skills Manager can now manage and distribute agent definitions across coding tools, with selected upstream community improvements folded in.
+
+### User-facing
+- New **Agent Library**: manage custom agent definitions centrally and deploy them to OpenCode (canonical Markdown), Codex (TOML variant), WorkBuddy (ExpertPlugin), and DSH (SKILL.md wrapper). One-click variant generation, per-tool deploy toggles, import from tools, file upload, and built-in agent collision protection.
+- Presets can now include agents: applying a preset deploys its member agents alongside skills; the sidebar shows an agent badge per preset.
+- The Agent Library now connects to the enterprise server: publish local agents with visibility and version metadata, and install agents from the enterprise market in one click.
+- Added out-of-the-box **ZCode** support: user-level skills sync to `~/.zcode/skills/`.
+- **Kimi Code path fixed**: skills now go to `~/.kimi-code/skills/`, which kimi-code actually reads, instead of the legacy `.config/agents/skills` shared with Amp and Replit. Re-sync Kimi once after upgrading.
+- Installing a skill by name that does not exist in the source now fails with a clear error instead of copying the whole repository.
+- Skills installed from a tag-pinned git source no longer show a permanent "check failed" update state.
+- Deeper user feedback integration: feedback can be attached to a specific agent from the Agent Library.
+
+### Security
+- Git-sourced installs now validate the requested subpath and the resolved directory against path escapes (`..`, absolute paths, symlink escapes) before anything is copied.
+
+### Developer & Governance
+- Windows builds now embed a long-path-aware application manifest, so installing skills with deeply nested paths no longer fails with "path too long" when `LongPathsEnabled` is on.
+- First launch now follows the system language (zh / zh-TW / en) with explicit-script precedence; an explicit setting always wins.
+- Enterprise login no longer breaks after a blocked blocking-call panic; all enterprise commands run off the async thread.
+- The Windows updater manifest is normalized to the NSIS installer so 1.24.1 clients keep a working silent upgrade path, and the process capability required for post-update relaunch is declared.
+
 ## [1.24.2] - 2026-08-10
 
 ### Release Overview
