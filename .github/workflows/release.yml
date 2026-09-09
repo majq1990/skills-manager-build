@@ -154,6 +154,14 @@ jobs:
     runs-on: ubuntu-latest
     name: Verify updater assets
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
       - name: Validate updater metadata and signatures
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -181,6 +189,10 @@ jobs:
           latest_url="https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/latest.json"
           curl -fsSL "$latest_url" >/tmp/latest.json
 
+          node scripts/normalize-updater-manifest.mjs /tmp/latest.json /tmp/latest-fixed.json
+          gh release upload "${{ github.ref_name }}" /tmp/latest-fixed.json#latest.json --clobber
+          mv /tmp/latest-fixed.json /tmp/latest.json
+
           if ! jq -e 'has("platforms") and (.platforms | has("windows-x86_64"))' /tmp/latest.json >/dev/null; then
             echo "latest.json does not include windows-x86_64 updater entry"
             cat /tmp/latest.json
@@ -189,6 +201,12 @@ jobs:
 
           if ! jq -e '.platforms["windows-x86_64"].signature and .platforms["windows-x86_64"].url' /tmp/latest.json >/dev/null; then
             echo "windows-x86_64 updater entry is missing signature/url"
+            cat /tmp/latest.json
+            exit 1
+          fi
+
+          if ! jq -e '.platforms["windows-x86_64"].url == .platforms["windows-x86_64-nsis"].url and .platforms["windows-x86_64"].signature == .platforms["windows-x86_64-nsis"].signature' /tmp/latest.json >/dev/null; then
+            echo "windows-x86_64 updater entry is not normalized to NSIS"
             cat /tmp/latest.json
             exit 1
           fi
@@ -220,4 +238,3 @@ jobs:
           curl -fsSL -X POST "https://demo.egova.com.cn/api/deploy/download-page" \
             -H "Content-Type: application/json" \
             -d "{\"version\":\"${VERSION}\",\"latest\":${LATEST_CONTENT},\"linux\":{\"deb\":\"${DEB_URL}\",\"rpm\":\"${RPM_URL}\",\"appimage\":\"${APPIMAGE_URL}\"}}" || true
-

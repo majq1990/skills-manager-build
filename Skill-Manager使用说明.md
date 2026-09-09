@@ -318,7 +318,7 @@ Unsafe Skills (2):
 当前支持以下 Agent 的 Skill 路径自动检测：
 - OpenCode: %APPDATA%\opencode\skills
 - OpenClaw: %USERPROFILE%\.openclaw\skills
-- WorkBuddy: %APPDATA%\Tencent\WorkBuddy\skills
+- WorkBuddy: %USERPROFILE%\.workbuddy\skills
 
 ### Q5: Token 有效期多久？
 Token 有效期为 **30天**。过期后需要重新登录。
