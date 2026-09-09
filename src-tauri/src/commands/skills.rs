@@ -13,6 +13,7 @@ use crate::core::{
     git_fetcher,
     install_cancel::InstallCancelRegistry,
     installer,
+    path_guard,
     repo_lock::RepoLock,
     scanner,
     skill_metadata::{self, is_valid_skill_dir},
@@ -2168,13 +2169,41 @@ pub fn resolve_skill_dir(
     skill_id: Option<&str>,
 ) -> Result<PathBuf, AppError> {
     if let Some(subpath) = subpath {
-        let path = repo_dir.join(subpath);
-        if path.exists() && path.is_dir() {
-            return Ok(path);
+        let candidate = repo_dir.join(subpath);
+        if !path_guard::is_path_safe(repo_dir, &candidate) {
+            return Err(AppError::invalid_input(format!(
+                "Path '{subpath}' resolves outside the repository"
+            )));
+        }
+        // With a locator to fall back on, the stored path is only taken when it
+        // still holds a skill. An upstream reorganization can leave the path
+        // occupied by a container or an unrelated directory, and copying that
+        // over the installed skill is the same mistake as guessing — let the
+        // locator look the skill up at its new home instead.
+        let usable = if skill_id.is_some() {
+            is_valid_skill_dir(&candidate)
+        } else {
+            candidate.is_dir()
+        };
+        if usable {
+            return Ok(candidate);
+        }
+        if skill_id.is_none() {
+            return Err(AppError::not_found(format!(
+                "Path '{subpath}' does not exist in the repository"
+            )));
         }
     }
 
-    git_fetcher::find_skill_dir(repo_dir, skill_id).map_err(AppError::git)
+    // `find_skill_dir` joins the locator id onto the checkout in several places
+    // before falling back to a recursive search, so its answer is checked too.
+    let resolved = git_fetcher::find_skill_dir(repo_dir, skill_id).map_err(AppError::git)?;
+    if !path_guard::is_path_safe(repo_dir, &resolved) {
+        return Err(AppError::invalid_input(
+            "Resolved skill directory is outside the repository",
+        ));
+    }
+    Ok(resolved)
 }
 
 pub fn resolve_skillssh_install_target(

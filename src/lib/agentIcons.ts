@@ -44,6 +44,7 @@ const AGENT_ICON_FILES: Record<string, string> = {
   warp: "warp.svg",
   windsurf: "windsurf.svg",
   zencoder: "zencoder.png",
+  zcode: "zcode.svg",
 };
 
 export function getAgentIconSrc(agentKey: string): string | null {

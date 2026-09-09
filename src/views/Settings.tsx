@@ -73,6 +73,7 @@ const MAINSTREAM_AGENT_KEYS = new Set([
   "gemini_cli",
   "github_copilot",
   "opencode",
+  "zcode",
   "hermes",
   "openclaw",
   "windsurf",

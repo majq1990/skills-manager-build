@@ -1,6 +1,6 @@
 use crate::core::central_repo;
 use crate::core::skill_metadata;
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use fs2::FileExt;
 use git2::{Direction, Repository};
 use sha2::{Digest, Sha256};
@@ -619,13 +619,10 @@ pub fn resolve_remote_revision(
     remote.connect_auth(Direction::Fetch, None, Some(proxy_opts))?;
     let refs = remote.list()?;
 
-    if let Some(branch) = branch {
-        let target = format!("refs/heads/{branch}");
-        if let Some(head) = refs.iter().find(|head| head.name() == target) {
+    for wanted in candidate_ref_names(branch) {
+        if let Some(head) = refs.iter().find(|head| head.name() == wanted) {
             return Ok(head.oid().to_string());
         }
-    } else if let Some(head) = refs.iter().find(|head| head.name() == "HEAD") {
-        return Ok(head.oid().to_string());
     }
 
     anyhow::bail!("Unable to resolve remote revision for {}", url)
@@ -737,6 +734,16 @@ pub fn find_skill_dir(repo_dir: &Path, skill_id: Option<&str>) -> Result<PathBuf
         if let Some(path) = name_match {
             return Ok(path);
         }
+
+        // A specific skill id was requested but nothing matched. Error instead
+        // of falling through to a container/root — otherwise the installer would
+        // copy the entire `skills/` container (or an unrelated root skill) under
+        // the requested name, duplicating every skill in the repo. See #278.
+        bail!(
+            "Skill '{}' not found in {}",
+            id,
+            repo_dir.display()
+        );
     }
 
     // Check if root is a skill
@@ -895,21 +902,52 @@ fn list_remote_branches(url: &str, proxy_url: Option<&str>) -> Result<Vec<String
     Ok(branches)
 }
 
+fn candidate_ref_names(source_ref: Option<&str>) -> Vec<String> {
+    match source_ref {
+        Some(name) => vec![
+            format!("refs/heads/{name}"),
+            format!("refs/tags/{name}^{{}}"),
+            format!("refs/tags/{name}"),
+        ],
+        None => vec!["HEAD".to_string()],
+    }
+}
+
+/// Pick a revision out of `git ls-remote` output by exact ref name.
+///
+/// Never take "the first line": querying a tag returns both the tag object and
+/// its peeled commit, and their order is the remote's business, not ours.
+fn select_remote_revision(stdout: &str, candidates: &[String]) -> Option<String> {
+    let refs: Vec<(&str, &str)> = stdout
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split_whitespace();
+            let sha = parts.next()?;
+            let name = parts.next()?;
+            (!sha.is_empty()).then_some((name, sha))
+        })
+        .collect();
+
+    candidates.iter().find_map(|wanted| {
+        refs.iter()
+            .find(|(name, _)| *name == wanted.as_str())
+            .map(|(_, sha)| sha.to_string())
+    })
+}
+
 fn resolve_remote_revision_with_git(
     url: &str,
     branch: Option<&str>,
     proxy_url: Option<&str>,
 ) -> Result<String> {
-    let target = branch
-        .map(|branch| format!("refs/heads/{branch}"))
-        .unwrap_or_else(|| "HEAD".to_string());
+    let candidates = candidate_ref_names(branch);
     let mut cmd = git_command();
     if let Some(proxy) = proxy_url.filter(|s| !s.is_empty()) {
         cmd.arg("-c").arg(format!("http.proxy={proxy}"));
         cmd.arg("-c").arg(format!("https.proxy={proxy}"));
     }
     let output = cmd
-        .args(["ls-remote", url, &target])
+        .args(["ls-remote", url])
         .output()
         .with_context(|| format!("Failed to query remote {}", url))?;
 
@@ -918,14 +956,8 @@ fn resolve_remote_revision_with_git(
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let revision = stdout
-        .lines()
-        .find_map(|line| line.split_whitespace().next())
-        .filter(|line| !line.is_empty())
-        .map(str::to_string)
-        .ok_or_else(|| anyhow::anyhow!("No remote revision found"))?;
-
-    Ok(revision)
+    select_remote_revision(&stdout, &candidates)
+        .ok_or_else(|| anyhow::anyhow!("No remote revision found"))
 }
 
 #[cfg(test)]
@@ -1084,16 +1116,18 @@ mod tests {
     }
 
     #[test]
-    fn find_skill_dir_invalid_id_falls_through_to_repo_default() {
-        // If skill_id matches nothing valid, falls back to repo-level defaults.
-        // Here the root has SKILL.md so the fallback returns the root.
+    fn find_skill_dir_invalid_id_errors_instead_of_copying_the_repo() {
+        // A requested skill id that matches nothing must fail, not fall through
+        // to repo-level defaults — the installer would otherwise copy the whole
+        // skills/ container (or an unrelated root skill) under the requested
+        // name. Here the root has SKILL.md, which the old fallback returned.
         let tmp = tempdir().unwrap();
         fs::write(tmp.path().join("SKILL.md"), "---\nname: root\n---").unwrap();
         let bogus_dir = tmp.path().join("my-skill");
         fs::create_dir_all(&bogus_dir).unwrap();
 
-        let found = find_skill_dir(tmp.path(), Some("my-skill")).unwrap();
-        assert_eq!(found, tmp.path());
+        let found = find_skill_dir(tmp.path(), Some("my-skill"));
+        assert!(found.is_err(), "expected error, got {:?}", found);
     }
 
     #[test]
@@ -1101,6 +1135,70 @@ mod tests {
         let tmp = tempdir().unwrap();
         let found = find_skill_dir(tmp.path(), None).unwrap();
         assert_eq!(found, tmp.path());
+    }
+
+    // ── remote ref resolution ──
+
+    #[test]
+    fn candidate_refs_prefer_branch_then_peeled_tag_then_tag() {
+        assert_eq!(
+            candidate_ref_names(Some("v0.8.0")),
+            vec![
+                "refs/heads/v0.8.0",
+                "refs/tags/v0.8.0^{}",
+                "refs/tags/v0.8.0",
+            ]
+        );
+        assert_eq!(candidate_ref_names(None), vec!["HEAD"]);
+    }
+
+    #[test]
+    fn resolves_annotated_tag_to_its_peeled_commit() {
+        // Both lines come back for an annotated tag. The first one is the tag
+        // object; only the peeled line is the commit the tag points at.
+        let stdout = "857196de\trefs/tags/v0.8.0\n346411fa\trefs/tags/v0.8.0^{}\n";
+        assert_eq!(
+            select_remote_revision(stdout, &candidate_ref_names(Some("v0.8.0"))),
+            Some("346411fa".to_string())
+        );
+    }
+
+    #[test]
+    fn resolves_lightweight_tag_without_peeled_line() {
+        let stdout = "c2ad91cc\trefs/tags/preview-1\n";
+        assert_eq!(
+            select_remote_revision(stdout, &candidate_ref_names(Some("preview-1"))),
+            Some("c2ad91cc".to_string())
+        );
+    }
+
+    #[test]
+    fn branch_wins_over_a_tag_of_the_same_name() {
+        let stdout = "aaaa\trefs/tags/release\nbbbb\trefs/heads/release\n";
+        assert_eq!(
+            select_remote_revision(stdout, &candidate_ref_names(Some("release"))),
+            Some("bbbb".to_string())
+        );
+    }
+
+    #[test]
+    fn unrelated_refs_do_not_resolve() {
+        // Guards the old "just take the first line" behaviour: a ref the remote
+        // does not have must fail rather than borrow another ref's revision.
+        let stdout = "aaaa\trefs/heads/main\n";
+        assert_eq!(
+            select_remote_revision(stdout, &candidate_ref_names(Some("v9.9.9"))),
+            None
+        );
+    }
+
+    #[test]
+    fn head_resolves_when_no_ref_is_pinned() {
+        let stdout = "94f6d9c0\tHEAD\naaaa\trefs/heads/master\n";
+        assert_eq!(
+            select_remote_revision(stdout, &candidate_ref_names(None)),
+            Some("94f6d9c0".to_string())
+        );
     }
 
     // ── relative_subpath ──

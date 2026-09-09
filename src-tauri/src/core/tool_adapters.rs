@@ -504,14 +504,18 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
         ToolAdapter {
             key: "kimi".into(),
             display_name: "Kimi Code CLI".into(),
-            relative_skills_dir: ".config/agents/skills".into(),
-            relative_detect_dir: ".kimi".into(),
+            // kimi-code (current generation) reads $KIMI_CODE_HOME/skills
+            // (default ~/.kimi-code/skills), not the legacy kimi-cli location
+            // in .config/agents/skills — that directory still belongs to Amp
+            // and Replit.
+            relative_skills_dir: ".kimi-code/skills".into(),
+            relative_detect_dir: ".kimi-code".into(),
             additional_scan_dirs: vec![],
             override_skills_dir: None,
             category: ToolCategory::Coding,
             is_custom: false,
             recursive_scan: false,
-            project_relative_skills_dir: None,
+            project_relative_skills_dir: Some(".kimi-code/skills".into()),
             ..Default::default()
         },
         ToolAdapter {
@@ -827,6 +831,19 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             ..Default::default()
         },
         ToolAdapter {
+            key: "zcode".into(),
+            display_name: "ZCode".into(),
+            relative_skills_dir: ".zcode/skills".into(),
+            relative_detect_dir: ".zcode".into(),
+            additional_scan_dirs: vec![],
+            override_skills_dir: None,
+            category: ToolCategory::Coding,
+            is_custom: false,
+            recursive_scan: false,
+            project_relative_skills_dir: None,
+            ..Default::default()
+        },
+        ToolAdapter {
             key: "adal".into(),
             display_name: "AdaL".into(),
             relative_skills_dir: ".adal/skills".into(),
@@ -1045,6 +1062,7 @@ pub fn enabled_installed_adapters(
 #[cfg(test)]
 mod tests {
     use super::default_tool_adapters;
+    use super::ToolCategory;
 
     #[test]
     fn antigravity_uses_current_default_skills_path() {
@@ -1091,5 +1109,39 @@ mod tests {
             adapter.relative_skills_dir,
             ".workbuddy/skills-marketplace/skills"
         );
+    }
+
+    #[test]
+    fn kimi_reads_the_kimi_code_skills_dir_not_the_legacy_cli_location() {
+        let adapter = default_tool_adapters()
+            .into_iter()
+            .find(|adapter| adapter.key == "kimi")
+            .expect("kimi adapter should exist");
+
+        // kimi-code reads $KIMI_CODE_HOME/skills (default ~/.kimi-code/skills);
+        // .config/agents/skills belongs to Amp and Replit.
+        assert_eq!(adapter.relative_skills_dir, ".kimi-code/skills");
+        assert_eq!(adapter.relative_detect_dir, ".kimi-code");
+        assert_eq!(
+            adapter.project_relative_skills_dir(),
+            ".kimi-code/skills"
+        );
+    }
+
+    #[test]
+    fn zcode_uses_expected_default_paths() {
+        let adapter = default_tool_adapters()
+            .into_iter()
+            .find(|adapter| adapter.key == "zcode")
+            .expect("zcode adapter should exist");
+
+        assert_eq!(adapter.display_name, "ZCode");
+        assert_eq!(adapter.relative_skills_dir, ".zcode/skills");
+        assert_eq!(adapter.relative_detect_dir, ".zcode");
+        assert_eq!(adapter.project_relative_skills_dir(), ".zcode/skills");
+        assert_eq!(adapter.category, ToolCategory::Coding);
+        assert!(!adapter.is_custom);
+        assert!(!adapter.recursive_scan);
+        assert!(adapter.additional_scan_dirs.is_empty());
     }
 }
