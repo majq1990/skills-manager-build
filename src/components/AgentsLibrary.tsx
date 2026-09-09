@@ -7,6 +7,7 @@ import {
   RefreshCw,
   Download,
   Upload,
+  UploadCloud,
   Trash2,
   Wand2,
   X,
@@ -24,6 +25,7 @@ import type {
 } from "../lib/tauri";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { FeedbackDialog } from "./FeedbackDialog";
+import { AgentPublishDialog } from "./AgentPublishDialog";
 
 const TOOL_BADGE: Record<string, string> = {
   opencode: "oc",
@@ -47,6 +49,9 @@ export function AgentsLibrary() {
   const [busy, setBusy] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
   const [feedbackAgent, setFeedbackAgent] = useState<string | null>(null);
+  const [publishAgent, setPublishAgent] = useState<{ name: string; centralPath: string } | null>(
+    null
+  );
   const [presets, setPresets] = useState<Preset[]>([]);
   const [memberPresetIds, setMemberPresetIds] = useState<string[]>([]);
 
@@ -319,6 +324,18 @@ export function AgentsLibrary() {
             </span>
             <span className="flex shrink-0 items-center gap-1">
               <button
+                onClick={() => {
+                  const agent = agents.find((a) => a.id === detailId);
+                  if (agent?.central_path) {
+                    setPublishAgent({ name: agent.name, centralPath: agent.central_path });
+                  }
+                }}
+                className="text-faint transition-colors hover:text-secondary"
+                title={t("agentLib.publishTitle")}
+              >
+                <UploadCloud className="h-4 w-4" />
+              </button>
+              <button
                 onClick={() =>
                   setFeedbackAgent(
                     agents.find((a) => a.id === detailId)?.name ?? null
@@ -514,6 +531,13 @@ export function AgentsLibrary() {
         open={!!feedbackAgent}
         agent={feedbackAgent ?? undefined}
         onClose={() => setFeedbackAgent(null)}
+      />
+
+      <AgentPublishDialog
+        open={!!publishAgent}
+        agentName={publishAgent?.name}
+        centralPath={publishAgent?.centralPath}
+        onClose={() => setPublishAgent(null)}
       />
     </div>
   );

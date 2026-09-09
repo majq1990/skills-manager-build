@@ -99,29 +99,11 @@ pub fn scan_tool_agent_files(store: &super::skill_store::SkillStore, adapter: &T
             }
         }
         AgentDeployKind::SkillWrapped => {
-            for entry in std::fs::read_dir(&root)
-                .with_context(|| format!("reading {}", root.display()))?
-            {
-                let entry = entry?;
-                let path = entry.path();
-                if !path.is_dir() || !path.join("SKILL.md").is_file() {
-                    continue;
-                }
-                let stem = path
-                    .file_name()
-                    .map(|s| s.to_string_lossy().to_string())
-                    .unwrap_or_default();
-                if deny.iter().any(|n| *n == stem) {
-                    continue;
-                }
-                let imported_agent_id = store.get_agent_by_name(&stem)?.map(|a| a.id);
-                entries.push(AgentFileEntry {
-                    tool: adapter.key.clone(),
-                    path: path.to_string_lossy().to_string(),
-                    name_guess: stem,
-                    imported_agent_id,
-                });
-            }
+            // SkillWrapped 工具（dsh）的 agent 承载目录就是它的 skills 目录：
+            // 里面全部是真正的技能（SKILL.md），没有可区分的独立 agent 存储。
+            // 把它们列成"可导入 agent"会把技能误收编成 agent（用户明确禁止），
+            // 因此这类工具不做导入发现；部署（sync）不受影响。
+            return Ok(vec![]);
         }
         AgentDeployKind::ExpertPlugin => {
             // Each plugin directory holds agents/*.md; the plugin directory
@@ -752,6 +734,130 @@ pub fn unsync_agent_scenario(store: &SkillStore, scenario_id: &str) {
             let _ = unsync_agent_from_tool(store, &agent_id, &target.tool);
         }
     }
+}
+
+/// Download-and-install an agent from the enterprise server into the central
+/// repo (mirror of the enterprise skill install). The package zip root must
+/// contain `AGENT.md`; other files (tool variants) are kept verbatim. The
+/// record is registered with an `enterprise` source; deployment still goes
+/// through the per-tool sync flow.
+pub fn install_enterprise_agent(
+    store: &SkillStore,
+    name: &str,
+    version: &str,
+) -> Result<AgentRecord> {
+    // 1. 下载企业 agent 包（全局 ENTERPRISE_API 内存 token）
+    let zip_bytes = crate::commands::enterprise::download_agent_zip(name, version)
+        .map_err(|e| anyhow!("{e}"))?;
+
+    // 2. 校验 ZIP magic（PK\x03\x04），防止把错误页/空响应当成包
+    if zip_bytes.len() < 4
+        || zip_bytes[0] != 0x50
+        || zip_bytes[1] != 0x4B
+        || zip_bytes[2] != 0x03
+        || zip_bytes[3] != 0x04
+    {
+        bail!("下载内容不是有效 ZIP（可能是错误页）");
+    }
+
+    // 3. 解压到临时目录（路径穿越防护：拒绝 ".." 与绝对路径）
+    let temp = tempfile::tempdir().context("creating temp dir")?;
+    let zip_path = temp.path().join("agent.zip");
+    std::fs::write(&zip_path, &zip_bytes)?;
+    let file = std::fs::File::open(&zip_path)?;
+    let mut archive = zip::ZipArchive::new(file)?;
+    let extract_dir = temp.path().join("extract");
+    std::fs::create_dir_all(&extract_dir)?;
+
+    let mut names: Vec<String> = Vec::new();
+    for i in 0..archive.len() {
+        let mut entry = archive.by_index(i)?;
+        if entry.is_dir() {
+            continue;
+        }
+        let raw = entry.name().to_string();
+        if raw.contains("..") || raw.starts_with('/') || raw.starts_with('\\') {
+            bail!("agent 包内含非法路径: {raw}");
+        }
+        let rel = raw.replace('\\', "/");
+        let dest = extract_dir.join(&rel);
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut out = std::fs::File::create(&dest)?;
+        std::io::copy(&mut entry, &mut out)?;
+        names.push(rel);
+    }
+
+    // 4. 允许 zip 根带一层顶层目录（与服务器 extractZip 同款行为）
+    let root = if names.len() > 1 && names.iter().all(|n| n.contains('/')) {
+        let first = names[0].split('/').next().unwrap_or("").to_string();
+        if !first.is_empty() && names.iter().all(|n| n.starts_with(&format!("{first}/"))) {
+            extract_dir.join(&first)
+        } else {
+            extract_dir.clone()
+        }
+    } else {
+        extract_dir.clone()
+    };
+
+    // 5. 校验 AGENT.md 存在且合法、zip 内名与请求名一致
+    let agent_md_path = root.join(agent_variant::CANONICAL_FILE_NAME);
+    if !agent_md_path.is_file() {
+        bail!("agent 包缺少 AGENT.md");
+    }
+    let canonical = std::fs::read_to_string(&agent_md_path)?;
+    validate_agent_markdown(&canonical).map_err(|e| anyhow!("'{name}' failed validation: {e}"))?;
+    let parsed = agent_variant::parse_agent_markdown(&canonical);
+    let agent_name = parsed
+        .as_ref()
+        .and_then(|p| p.name.clone())
+        .unwrap_or_else(|| name.to_string());
+    if agent_name != name {
+        bail!("agent 包内名称 '{agent_name}' 与请求名 '{name}' 不一致");
+    }
+
+    // 6. 拷贝 AGENT.md + 变体文件到中央库
+    let central_dir = central_repo::agents_dir().join(&agent_name);
+    std::fs::create_dir_all(&central_dir)?;
+    for entry in std::fs::read_dir(&root)? {
+        let entry = entry?;
+        if entry.path().is_file() {
+            let dest = central_dir.join(entry.file_name());
+            std::fs::copy(entry.path(), &dest)?;
+        }
+    }
+
+    // 7. 入库（source_ref 记录 企业源@版本）
+    let record = match store.get_agent_by_name(&agent_name)? {
+        Some(mut agent) => {
+            agent.updated_at = chrono::Utc::now().timestamp();
+            agent.source_ref = Some(format!("enterprise@{}", version));
+            agent.content_hash = Some(content_sha256(canonical.as_bytes()));
+            store.upsert_agent(&agent)?;
+            agent
+        }
+        None => {
+            let mut record = SkillStore::new_agent_record(
+                agent_name.clone(),
+                parsed.as_ref().and_then(|p| p.description.clone()),
+                "enterprise",
+                central_dir.to_string_lossy().to_string(),
+                Some(content_sha256(canonical.as_bytes())),
+            );
+            record.source_ref = Some(format!("enterprise@{}", version));
+            store.insert_agent(&record)?;
+            record
+        }
+    };
+
+    let mut draft = super::audit_log::AuditDraft::new("agent_import")
+        .skill(record.id.clone(), agent_name.clone())
+        .ok();
+    draft.detail = Some(format!("kind=agent enterprise install {}@{}", name, version));
+    store.log_audit(draft);
+
+    Ok(record)
 }
 
 #[cfg(test)]

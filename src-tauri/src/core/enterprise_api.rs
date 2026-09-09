@@ -69,6 +69,13 @@ pub struct SkillsResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentsResponse {
+    pub success: bool,
+    pub count: usize,
+    pub agents: Vec<EnterpriseSkill>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TagsResponse {
     pub success: bool,
     pub count: usize,
@@ -483,6 +490,200 @@ impl EnterpriseApi {
             let status = resp.status();
             let text = resp.text().unwrap_or_default();
             anyhow::bail!("Failed to delete enterprise skill ({}): {}", status, text);
+        }
+        Ok(())
+    }
+
+    // ===== Agent 制品（服务器端 agent 存储，/agents 路由与 skills 同构）=====
+
+    /// List agents available on the enterprise server (visibility-filtered by
+    /// the server). Items reuse `EnterpriseSkill`'s field shape.
+    pub fn list_agents(&self) -> Result<Vec<EnterpriseSkill>> {
+        let client = Self::build_client();
+        let url = format!("{}/agents", self.base_url);
+
+        let resp = client
+            .get(&url)
+            .header("Authorization", self.auth_header()?)
+            .send()
+            .context("Failed to fetch agents")?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().unwrap_or_default();
+            anyhow::bail!("Failed to list agents ({}): {}", status, text);
+        }
+
+        let agents_resp: AgentsResponse = resp.json().context("Failed to parse agents response")?;
+        Ok(agents_resp.agents)
+    }
+
+    /// Search agents by free-text query and/or tag (mirror of skills search).
+    pub fn search_agents(&self, q: Option<&str>, tag: Option<&str>) -> Result<Vec<EnterpriseSkill>> {
+        let client = Self::build_client();
+        let mut url = format!("{}/agents/search", self.base_url);
+        let mut params = Vec::new();
+        if let Some(q) = q.filter(|s| !s.trim().is_empty()) {
+            params.push(format!("q={}", urlencoding::encode(q)));
+        }
+        if let Some(tag) = tag.filter(|s| !s.trim().is_empty()) {
+            params.push(format!("tag={}", urlencoding::encode(tag)));
+        }
+        if !params.is_empty() {
+            url.push('?');
+            url.push_str(&params.join("&"));
+        }
+
+        let resp = client
+            .get(&url)
+            .header("Authorization", self.auth_header()?)
+            .send()
+            .context("Failed to search agents")?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().unwrap_or_default();
+            anyhow::bail!("Failed to search agents ({}): {}", status, text);
+        }
+
+        let agents_resp: AgentsResponse = resp.json().context("Failed to parse agents response")?;
+        Ok(agents_resp.agents)
+    }
+
+    /// Upload/publish a local agent (zip of its central directory) to the
+    /// enterprise server. The zip root must contain AGENT.md and its `name`
+    /// must equal `name`. Same multipart/version/visibility contract as
+    /// `upload_skill`. Blocking — call inside spawn_blocking.
+    pub fn upload_agent(
+        &self,
+        name: &str,
+        zip_bytes: Vec<u8>,
+        version: Option<&str>,
+        visibility: Option<&str>,
+    ) -> Result<UploadResponse> {
+        use reqwest::blocking::multipart::{Form, Part};
+
+        let client = Self::build_package_client();
+        let url = format!(
+            "{}/agents/{}/upload",
+            self.base_url,
+            urlencoding::encode(name)
+        );
+
+        let part = Part::bytes(zip_bytes)
+            .file_name("agent.zip")
+            .mime_str("application/zip")
+            .context("Failed to build upload part")?;
+        let mut form = Form::new().part("package", part);
+        if let Some(v) = version {
+            if !v.trim().is_empty() {
+                form = form.text("version", v.to_string());
+            }
+        }
+        if let Some(vis) = visibility {
+            if !vis.trim().is_empty() {
+                form = form.text("visibility", vis.to_string());
+            }
+        }
+
+        let resp = client
+            .post(&url)
+            .header("Authorization", self.auth_header()?)
+            .multipart(form)
+            .send()
+            .context("Failed to upload agent")?;
+
+        let status = resp.status();
+        let text = resp.text().unwrap_or_default();
+
+        if !status.is_success() {
+            let detail = serde_json::from_str::<serde_json::Value>(&text)
+                .ok()
+                .map(|v| {
+                    let error = v.get("error").and_then(|x| x.as_str()).unwrap_or("");
+                    let message = v.get("message").and_then(|x| x.as_str()).unwrap_or("");
+                    match (error.is_empty(), message.is_empty()) {
+                        (false, false) => format!("{}: {}", error, message),
+                        (false, true) => error.to_string(),
+                        (true, false) => message.to_string(),
+                        (true, true) => String::new(),
+                    }
+                })
+                .filter(|s| !s.is_empty())
+                .unwrap_or(text);
+            anyhow::bail!("Upload failed ({}): {}", status, detail);
+        }
+
+        let body: serde_json::Value =
+            serde_json::from_str(&text).context("Failed to parse upload response")?;
+        let agent = body.get("agent");
+        Ok(UploadResponse {
+            success: body
+                .get("success")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true),
+            version: agent
+                .and_then(|s| s.get("version"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            message: body
+                .get("message")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            status: agent
+                .and_then(|s| s.get("status"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+        })
+    }
+
+    /// Download an agent package zip for (name, version).
+    pub fn download_agent(&self, name: &str, version: &str) -> Result<Vec<u8>> {
+        let client = Self::build_package_client();
+        let url = format!(
+            "{}/agents/{}/{}/download",
+            self.base_url,
+            urlencoding::encode(name),
+            urlencoding::encode(version)
+        );
+
+        let resp = client
+            .get(&url)
+            .header("Authorization", self.auth_header()?)
+            .send()
+            .with_context(|| format!("Failed to download agent package '{}@{}'", name, version))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().unwrap_or_default();
+            anyhow::bail!("Failed to download agent ({}): {}", status, text);
+        }
+
+        let bytes = resp.bytes().context("Failed to read agent package")?;
+        Ok(bytes.to_vec())
+    }
+
+    /// Delete an enterprise agent and all of its published versions.
+    pub fn delete_agent(&self, name: &str) -> Result<()> {
+        let client = Self::build_client();
+        let url = format!(
+            "{}/agents/{}",
+            self.base_url,
+            urlencoding::encode(name)
+        );
+        let resp = client
+            .delete(&url)
+            .header("Authorization", self.auth_header()?)
+            .send()
+            .context("Failed to delete enterprise agent")?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let text = resp.text().unwrap_or_default();
+            anyhow::bail!("Failed to delete enterprise agent ({}): {}", status, text);
         }
         Ok(())
     }

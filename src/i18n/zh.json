@@ -977,7 +977,11 @@
     "delete": "删除",
     "deleteConfirm": "确定删除企业技能“{{name}}”及其全部已发布版本吗？",
     "deleted": "已删除 {{name}}",
-    "deleteFailed": "删除失败"
+    "deleteFailed": "删除失败",
+    "skillsTab": "技能",
+    "agentsTab": "Agent",
+    "agentCount": "{count} 个 Agent",
+    "agentsEmpty": "企业服务器上还没有可用的 Agent"
   },
   "mcp": {
     "market": {
@@ -1005,7 +1009,7 @@
     }
   },
   "agentLib": {
-    "nav": "Agent库",
+    "nav": "agent库",
     "title": "Agents 库",
     "import": "从工具导入",
     "importTitle": "从工具目录导入 Agent",
@@ -1023,6 +1027,9 @@
     "deleteConfirm": "删除 Agent「{{name}}」？将同时卸载其在所有工具上的部署。",
     "presetSection": "Preset 归属",
     "noPresets": "暂无 Preset",
-    "upload": "上传 Agent"
+    "upload": "上传 Agent",
+    "publish": "发布",
+    "publishTitle": "发布 Agent 到企业",
+    "publishSuccess": "已发布 {name} v{version}"
   }
 }

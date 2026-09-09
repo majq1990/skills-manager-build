@@ -900,6 +900,23 @@ export const enterpriseDeleteSkill = (name: string) =>
 export const enterpriseInstallSkill = (name: string, version: string) =>
   invoke<void>("enterprise_install_skill", { name, version });
 
+export const enterpriseListAgents = () =>
+  invoke<EnterpriseSkill[]>("enterprise_list_agents");
+
+export const enterpriseUploadAgent = (
+  name: string,
+  centralPath: string,
+  version?: string,
+  visibility?: string
+) =>
+  invoke<{ success: boolean; version: string; message: string; status: string }>(
+    "enterprise_upload_agent",
+    { name, centralPath, version: version ?? null, visibility: visibility ?? null }
+  );
+
+export const enterpriseInstallAgent = (name: string, version: string) =>
+  invoke<AgentRecord>("enterprise_install_agent", { name, version });
+
 export const enterpriseSubmitFeedback = (
   feedbackType: string,
   skill: string,

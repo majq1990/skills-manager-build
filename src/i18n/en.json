@@ -977,7 +977,11 @@
     "delete": "Delete",
     "deleteConfirm": "Delete enterprise skill \"{{name}}\" and all published versions?",
     "deleted": "Deleted {{name}}",
-    "deleteFailed": "Delete failed"
+    "deleteFailed": "Delete failed",
+    "skillsTab": "Skills",
+    "agentsTab": "Agents",
+    "agentCount": "{count} agents",
+    "agentsEmpty": "No agents available on the enterprise server yet"
   },
   "mcp": {
     "market": {
@@ -1023,6 +1027,9 @@
     "deleteConfirm": "Delete agent \"{name}\"? Its deployments on all tools will be removed too.",
     "presetSection": "Preset membership",
     "noPresets": "No presets yet",
-    "upload": "Upload Agent"
+    "upload": "Upload Agent",
+    "publish": "发布",
+    "publishTitle": "发布 Agent 到企业",
+    "publishSuccess": "已发布 {name} v{version}"
   }
 }

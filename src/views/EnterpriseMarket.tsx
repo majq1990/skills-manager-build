@@ -21,6 +21,10 @@ import type { EnterpriseSkill } from "../lib/tauri";
 import { DetailSheet } from "../components/DetailSheet";
 import { useApp } from "../context/AppContext";
 
+/** 统一把后端错误归一成字符串（替代散落的 `(err as any)?.message`）。 */
+const errMsg = (err: unknown): string =>
+  String(err instanceof Error ? err.message : err ?? "");
+
 export function EnterpriseMarket() {
   const { t } = useTranslation();
   const { enterpriseUploadVisibilities, setEnterpriseUploadVisibilities } = useApp();
@@ -42,9 +46,15 @@ export function EnterpriseMarket() {
   const [deleting, setDeleting] = useState(false);
   // 本地已安装技能名（归一化小写），用于把企业市场里"本地已有"的技能标成已安装/更新
   const [installedNames, setInstalledNames] = useState<Set<string>>(new Set());
+  // 企业 Agent 市场（服务器端 agent 存储）
+  const [marketView, setMarketView] = useState<"skills" | "agents">("skills");
+  const [agents, setAgents] = useState<EnterpriseSkill[]>([]);
+  const [installedAgentNames, setInstalledAgentNames] = useState<Set<string>>(new Set());
+  const [agentInstalling, setAgentInstalling] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     checkAuth();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const checkAuth = async () => {
@@ -55,6 +65,8 @@ export function EnterpriseMarket() {
         loadSkills();
         loadTags();
         loadInstalled();
+        loadAgents();
+        loadInstalledAgents();
       }
     } catch {
       setIsAuthenticated(false);
@@ -80,6 +92,7 @@ export function EnterpriseMarket() {
       const tags = await api.enterpriseGetTags();
       setAllTags(tags);
     } catch {
+      // 标签拉取失败不阻塞主流程
     }
   };
 
@@ -89,6 +102,49 @@ export function EnterpriseMarket() {
       const managed = await api.getManagedSkills();
       setInstalledNames(new Set(managed.map((s) => s.name.trim().toLowerCase())));
     } catch {
+      // 本地受管列表拿不到时忽略
+    }
+  };
+
+  // 企业 Agent 市场：列表 / 本地已装 / 安装
+  const loadAgents = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      setAgents(await api.enterpriseListAgents());
+    } catch (err) {
+      setError(String(err));
+      toast.error(t("enterprise.loadError"));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadInstalledAgents = async () => {
+    try {
+      const managed = await api.getAgents();
+      setInstalledAgentNames(new Set(managed.map((a) => a.name.trim().toLowerCase())));
+    } catch {
+      // 本地 agent 列表拿不到时忽略
+    }
+  };
+
+  const handleInstallAgent = async (agent: EnterpriseSkill) => {
+    if (agentInstalling.has(agent.name)) return;
+    setAgentInstalling((prev) => new Set(prev).add(agent.name));
+    try {
+      await api.enterpriseInstallAgent(agent.name, agent.version);
+      toast.success(`${agent.name} ${t("enterprise.installed")}`);
+      setInstalledAgentNames((prev) => new Set(prev).add(agent.name.trim().toLowerCase()));
+    } catch (err) {
+      const msg = errMsg(err);
+      toast.error(`${agent.name} ${t("enterprise.installFailed")}: ${msg}`);
+    } finally {
+      setAgentInstalling((prev) => {
+        const next = new Set(prev);
+        next.delete(agent.name);
+        return next;
+      });
     }
   };
 
@@ -111,10 +167,12 @@ export function EnterpriseMarket() {
         loadSkills();
         loadTags();
         loadInstalled();
+        loadAgents();
+        loadInstalledAgents();
       }
     } catch (err) {
       // 后端错误分类：连接失败 / 凭证错(401) / 服务器响应异常，避免一律误报为"账号密码错误"
-      const msg = String((err as any)?.message ?? err ?? "");
+      const msg = errMsg(err);
       if (/connect|dns|timed out|timeout|tcp|network|refused/i.test(msg)) {
         toast.error(t("enterprise.loginConnError"));
       } else if (/\(401\)|invalid username or password|authentication failed/i.test(msg)) {
@@ -139,7 +197,7 @@ export function EnterpriseMarket() {
       // 装好后即时标记为已安装（无需等下次刷新）
       setInstalledNames((prev) => new Set(prev).add(skill.name.trim().toLowerCase()));
     } catch (err) {
-      const msg = String((err as any)?.message ?? err ?? "");
+      const msg = errMsg(err);
       toast.error(`${skill.name} ${t("enterprise.installFailed")}: ${msg}`);
     } finally {
       setInstalling((prev) => {
@@ -161,7 +219,7 @@ export function EnterpriseMarket() {
       setSelectedSkill(null);
       toast.success(t("enterprise.deleted", { name: deletedName }));
     } catch (err) {
-      toast.error(`${t("enterprise.deleteFailed")}: ${String((err as any)?.message ?? err ?? "")}`);
+      toast.error(`${t("enterprise.deleteFailed")}: ${errMsg(err)}`);
     } finally {
       setDeleting(false);
     }
@@ -294,7 +352,112 @@ export function EnterpriseMarket() {
     );
   }
 
-  // Authenticated view
+  // Authenticated view — 企业 Agent 市场（服务器端 agent 存储，与技能市场同构）
+  if (marketView === "agents") {
+    return (
+      <div className="flex flex-col h-full">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--color-border)]">
+          <div className="flex items-center gap-3">
+            <Building2 className="w-6 h-6 text-[var(--color-accent)]" />
+            <h1 className="text-xl font-semibold text-[var(--color-text-primary)]">
+              {t("enterprise.title")}
+            </h1>
+            <div className="flex items-center gap-1 rounded-lg border border-[var(--color-border)] p-0.5">
+              <button
+                onClick={() => setMarketView("skills")}
+                className="px-3 py-1 text-sm rounded-md text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] transition-colors"
+              >
+                {t("enterprise.skillsTab")}
+              </button>
+              <button
+                onClick={() => setMarketView("agents")}
+                className="px-3 py-1 text-sm rounded-md bg-[var(--color-accent)] text-white transition-colors"
+              >
+                {t("enterprise.agentsTab")}
+              </button>
+            </div>
+            <span className="text-sm text-[var(--color-text-tertiary)]">
+              {t("enterprise.agentCount", { count: agents.length })}
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                loadAgents();
+                loadInstalledAgents();
+              }}
+              className="p-2 rounded-lg hover:bg-[var(--color-surface-hover)] text-[var(--color-text-secondary)]"
+              title={t("common.refresh")}
+            >
+              <RefreshCw className="w-4 h-4" />
+            </button>
+            <button
+              onClick={handleLogout}
+              className="flex items-center gap-2 px-3 py-1.5 text-sm border border-[var(--color-border)] rounded-lg text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)]"
+            >
+              <LogOut className="w-4 h-4" />
+              {t("enterprise.logout")}
+            </button>
+          </div>
+        </div>
+
+        {/* Agent 列表 */}
+        <div className="flex-1 overflow-y-auto px-6 py-4">
+          {agents.length === 0 ? (
+            <p className="text-sm text-[var(--color-text-tertiary)] text-center py-12">
+              {t("enterprise.agentsEmpty")}
+            </p>
+          ) : (
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-3">
+              {agents.map((agent) => {
+                const installed = installedAgentNames.has(agent.name.trim().toLowerCase());
+                const installing = agentInstalling.has(agent.name);
+                return (
+                  <div
+                    key={agent.name}
+                    className="flex flex-col rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 transition-colors hover:bg-[var(--color-surface-hover)]"
+                  >
+                    <div className="mb-1 flex items-center justify-between gap-2">
+                      <span className="truncate font-medium text-[var(--color-text-primary)]">
+                        {agent.name}
+                      </span>
+                      <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold text-[var(--color-text-tertiary)] bg-[var(--color-surface-active)]">
+                        v{agent.version}
+                      </span>
+                    </div>
+                    <p className="mb-2 line-clamp-2 min-h-[2rem] flex-1 text-[12px] text-[var(--color-text-secondary)]">
+                      {agent.description || "—"}
+                    </p>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] text-[var(--color-text-tertiary)]">
+                        {agent.visibility}
+                      </span>
+                      <button
+                        disabled={installing || installed}
+                        onClick={() => void handleInstallAgent(agent)}
+                        className="shrink-0 rounded-lg px-3 py-1.5 text-[12px] font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed bg-[var(--color-accent)] text-white hover:opacity-90"
+                      >
+                        {installing ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : installed ? (
+                          t("enterprise.installed")
+                        ) : (
+                          t("enterprise.install")
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Authenticated view — 企业技能市场
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
@@ -304,6 +467,20 @@ export function EnterpriseMarket() {
           <h1 className="text-xl font-semibold text-[var(--color-text-primary)]">
             {t("enterprise.title")}
           </h1>
+          <div className="flex items-center gap-1 rounded-lg border border-[var(--color-border)] p-0.5">
+            <button
+              onClick={() => setMarketView("skills")}
+              className="px-3 py-1 text-sm rounded-md bg-[var(--color-accent)] text-white transition-colors"
+            >
+              {t("enterprise.skillsTab")}
+            </button>
+            <button
+              onClick={() => setMarketView("agents")}
+              className="px-3 py-1 text-sm rounded-md text-[var(--color-text-secondary)] hover:bg-[var(--color-surface-hover)] transition-colors"
+            >
+              {t("enterprise.agentsTab")}
+            </button>
+          </div>
           <span className="text-sm text-[var(--color-text-tertiary)]">
             {t("enterprise.skillCount", { count: filteredSkills.length })}
           </span>
