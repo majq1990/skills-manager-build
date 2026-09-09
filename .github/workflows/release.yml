@@ -190,8 +190,15 @@ jobs:
           curl -fsSL "$latest_url" >/tmp/latest.json
 
           node scripts/normalize-updater-manifest.mjs /tmp/latest.json /tmp/latest-fixed.json
-          gh release upload "${{ github.ref_name }}" /tmp/latest-fixed.json#latest.json --clobber
-          mv /tmp/latest-fixed.json /tmp/latest.json
+          # `gh release upload` does NOT support a `file#asset-name` rename:
+          # uploading latest-fixed.json would create a second asset under its
+          # own name and leave the canonical latest.json stale (pointing at
+          # MSI). The local file must be named latest.json for --clobber to
+          # replace the right asset.
+          cp /tmp/latest-fixed.json /tmp/upload/latest.json 2>/dev/null || { mkdir -p /tmp/upload && cp /tmp/latest-fixed.json /tmp/upload/latest.json; }
+          gh release upload "${{ github.ref_name }}" /tmp/upload/latest.json --clobber
+          rm -f /tmp/latest-fixed.json
+          mv /tmp/upload/latest.json /tmp/latest.json
 
           if ! jq -e 'has("platforms") and (.platforms | has("windows-x86_64"))' /tmp/latest.json >/dev/null; then
             echo "latest.json does not include windows-x86_64 updater entry"
@@ -213,28 +220,22 @@ jobs:
 
           echo "Updater assets validation passed"
 
-      - name: Update download page
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # NOTE: there is no server-side deploy API for this — the old
+      # "POST /api/deploy/download-page" endpoint answers 404 and `|| true`
+      # masked it, so the enterprise updater manifest was silently left stale
+      # (v1.25.0 release night). The manifest must be published manually:
+      #   scp <normalized latest.json> root@demo.egova.com.cn:/egova/MediaRoot/skill-manager/latest.json
+      # (back up the previous one as latest.json.bak.<version>-<date> first;
+      # normalize with scripts/normalize-updater-manifest.mjs).
+      - name: Verify enterprise updater manifest is fresh
         run: |
           set -euo pipefail
-          api_url="https://api.github.com/repos/${{ github.repository }}/releases/tags/${{ github.ref_name }}"
-          release_json=$(curl -fsSL \
-            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-            -H "Accept: application/vnd.github+json" \
-            "$api_url")
-          VERSION=$(echo "$release_json" | jq -r '.tag_name' | sed 's/^v//')
-          LATEST_JSON_URL="https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/latest.json"
-          curl -fsSL "$LATEST_JSON_URL" -o /tmp/latest.json
-          LATEST_CONTENT=$(cat /tmp/latest.json)
-
-          # Derive Linux URLs from patterns (same base as Windows but with Linux-specific filenames)
-          BASE="https://demo.egova.com.cn/MediaRoot/skill-manager"
-          DEB_URL="${BASE}/skills-manager_${VERSION}_amd64.deb"
-          RPM_URL="${BASE}/skills-manager-${VERSION}-1.x86_64.rpm"
-          APPIMAGE_URL="${BASE}/skills-manager_${VERSION}_amd64.AppImage"
-
-          DL_PAGE="https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/download.html"
-          curl -fsSL -X POST "https://demo.egova.com.cn/api/deploy/download-page" \
-            -H "Content-Type: application/json" \
-            -d "{\"version\":\"${VERSION}\",\"latest\":${LATEST_CONTENT},\"linux\":{\"deb\":\"${DEB_URL}\",\"rpm\":\"${RPM_URL}\",\"appimage\":\"${APPIMAGE_URL}\"}}" || true
+          VERSION="${GITHUB_REF_NAME#v}"
+          sleep 10
+          served=$(curl -fsSL --max-time 30 "https://demo.egova.com.cn/MediaRoot/skill-manager/latest.json" | jq -r '.version' || echo "")
+          if [ "$served" != "$VERSION" ]; then
+            echo "WARNING: enterprise updater endpoint serves '${served:-unreachable}', expected '${VERSION}'."
+            echo "Publish it manually (see the note above this step) — old clients will not see the update until then."
+          else
+            echo "Enterprise updater endpoint serves $VERSION"
+          fi
