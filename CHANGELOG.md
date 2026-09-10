@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.25.1] - 2026-09-10
+
+### Release Overview
+- Unified-memory sync is now idempotent: generated SKILL.md headers no longer accumulate across sync rounds, and historically bloated files self-heal.
+
+### Fixed
+- **Idempotent memory sync (P0)**: the sync now strips leftover generated artifacts (banner comments and `**Memory type**` lines, plus generated frontmatter) from sources before regenerating — repeated syncs can no longer snowball files, no matter what writes generated output back into the shared root. Previously every round appended one more header to each of 273 memory skills' SKILL.md (~2.7MB per file, ~1.7GB total), exhausting the WorkBuddy task runner's heap.
+- **Self-healing for bloated sources**: when a source still carries generated artifacts, the canonical clean form is written back in place — the existing bloat is cleaned up on the first sync after upgrading, no manual dedup pass required.
+- **Idempotent deploy**: unchanged SKILL.md targets are skipped instead of being rewritten every minute, so mtimes stop churning and downstream agents stop reloading.
+- **Size watchdog**: generated SKILL.md bodies over 100KB are logged as a warning, so abnormal sizes can no longer spread to every agent silently.
+
+### Verification
+- Regression coverage: 100 consecutive sync rounds (including the worst case where generated output is written back as the next source) keep the target byte size and banner count constant.
+
 ## [1.25.0] - 2026-09-09
 
 ### Release Overview
