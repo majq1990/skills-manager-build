@@ -211,17 +211,21 @@ pub fn import_agent_from_file(
     let record = match existing {
         Some(mut agent) => {
             agent.updated_at = chrono::Utc::now().timestamp();
+            if let Some(dn) = parsed.as_ref().and_then(|p| p.display_name.clone()) {
+                agent.display_name = Some(dn);
+            }
             store.upsert_agent(&agent)?;
             agent
         }
         None => {
-            let record = SkillStore::new_agent_record(
+            let mut record = SkillStore::new_agent_record(
                 name.clone(),
                 parsed.as_ref().and_then(|p| p.description.clone()),
                 "local-imported",
                 central_dir.to_string_lossy().to_string(),
                 Some(content_sha256(canonical_content.as_bytes())),
             );
+            record.display_name = parsed.as_ref().and_then(|p| p.display_name.clone());
             store.insert_agent(&record)?;
             record
         }
@@ -356,17 +360,21 @@ pub fn import_agent_upload(
     let record = match existing {
         Some(mut agent) => {
             agent.updated_at = chrono::Utc::now().timestamp();
+            if let Some(dn) = parsed.as_ref().and_then(|p| p.display_name.clone()) {
+                agent.display_name = Some(dn);
+            }
             store.upsert_agent(&agent)?;
             agent
         }
         None => {
-            let record = SkillStore::new_agent_record(
+            let mut record = SkillStore::new_agent_record(
                 name.clone(),
                 parsed.as_ref().and_then(|p| p.description.clone()),
                 "local-imported",
                 central_dir.to_string_lossy().to_string(),
                 Some(content_sha256(canonical_content.as_bytes())),
             );
+            record.display_name = parsed.as_ref().and_then(|p| p.display_name.clone());
             store.insert_agent(&record)?;
             record
         }
@@ -467,7 +475,17 @@ fn deploy_with_adapter(
             std::fs::create_dir_all(staging_root.join("agents"))?;
             std::fs::create_dir_all(staging_root.join(".codebuddy-plugin"))?;
             std::fs::copy(file, staging_root.join("agents").join(format!("{}.md", agent.name)))?;
-            let plugin_json = generate_expert_plugin_json(&agent.name, agent.description.as_deref())?;
+            // Pass the variant's frontmatter through so localized display
+            // metadata (displayName/profession/tags/quickPrompts) survives
+            // the round-trip into the regenerated plugin.json.
+            let frontmatter = std::fs::read_to_string(file)
+                .ok()
+                .and_then(|content| agent_variant::frontmatter_value(&content));
+            let plugin_json = generate_expert_plugin_json(
+                &agent.name,
+                agent.description.as_deref(),
+                frontmatter.as_ref(),
+            )?;
             std::fs::write(
                 staging_root.join(".codebuddy-plugin").join("plugin.json"),
                 plugin_json,

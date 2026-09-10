@@ -974,6 +974,8 @@ export interface AgentRecord {
   id: string;
   name: string;
   description: string | null;
+  /** Human-facing display name (e.g. WorkBuddy expert's localized displayName). */
+  display_name: string | null;
   source_type: string;
   central_path: string;
   content_hash: string | null;

@@ -24,6 +24,9 @@ pub struct AgentRecord {
     pub id: String,
     pub name: String,
     pub description: Option<String>,
+    /// Human-facing display name (e.g. a WorkBuddy expert's localized
+    /// `displayName`). Identity remains `name`; this is purely cosmetic.
+    pub display_name: Option<String>,
     pub source_type: String,
     pub source_ref: Option<String>,
     pub central_path: String,
@@ -80,11 +83,12 @@ fn row_to_agent(row: &rusqlite::Row<'_>) -> rusqlite::Result<AgentRecord> {
         created_at: row.get(8)?,
         updated_at: row.get(9)?,
         status: row.get(10)?,
+        display_name: row.get(11)?,
     })
 }
 
 const AGENT_COLS: &str = "id, name, description, source_type, source_ref, central_path, \
-     content_hash, enabled, created_at, updated_at, status";
+     content_hash, enabled, created_at, updated_at, status, display_name";
 
 impl SkillStore {
     // ── agents ──
@@ -94,7 +98,7 @@ impl SkillStore {
         conn.execute(
             &format!(
                 "INSERT INTO agents ({AGENT_COLS}) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)"
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)"
             ),
             params![
                 agent.id,
@@ -108,6 +112,7 @@ impl SkillStore {
                 agent.created_at,
                 agent.updated_at,
                 agent.status,
+                agent.display_name,
             ],
         )?;
         Ok(())
@@ -118,9 +123,10 @@ impl SkillStore {
         conn.execute(
             &format!(
                 "INSERT INTO agents ({AGENT_COLS}) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12) \
                  ON CONFLICT(id) DO UPDATE SET \
                    name=excluded.name, description=excluded.description, \
+                   display_name=COALESCE(excluded.display_name, agents.display_name), \
                    source_type=excluded.source_type, source_ref=excluded.source_ref, \
                    central_path=excluded.central_path, content_hash=excluded.content_hash, \
                    enabled=excluded.enabled, updated_at=excluded.updated_at, \
@@ -138,6 +144,7 @@ impl SkillStore {
                 agent.created_at,
                 agent.updated_at,
                 agent.status,
+                agent.display_name,
             ],
         )?;
         Ok(())
@@ -497,6 +504,7 @@ impl SkillStore {
             id: new_row_id(),
             name,
             description,
+            display_name: None,
             source_type: source_type.to_string(),
             source_ref: None,
             central_path,

@@ -5,15 +5,16 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [1.26.0] - 2026-09-10
+## [1.25.2] - 2026-09-10
 
 ### 发布概览
-- 「企业技能」升级为「企业能力库」：同时承载技能与 Agent；Agent 库补齐详情渲染与搜索。
+- 「企业技能」升级为「企业能力库」：同时承载技能与 Agent；Agent 库补齐详情渲染、搜索与 WorkBuddy 专家中文名保留。
 
 ### 用户可见更新
 - **企业技能 → 企业能力库**：入口、登录提示、加载/错误/删除等全部文案更名（简体/繁体/英文三语言），覆盖技能与 Agent 两个标签页；服务器地址与内部接口不变。
 - **Agent 详情可读化**：Agent 库详情面板的正文从纯文本改为渲染后的 Markdown（与技能详情一致），AGENT.md 描述的能力一目了然。
 - **Agent 库支持搜索**：顶栏新增搜索框，按名称或描述实时过滤，与技能页搜索同款交互。
+- **Agent 显示名（displayName）**：从 WorkBuddy 导入专家时解析 `displayName`（中文优先、英文兜底）存为展示名，Agent 库卡片与详情优先显示「工程毕升自主交付专家」这类本地化名称；部署回 WorkBuddy 时 `displayName`/`profession`/`tags`/`quickPrompts` 原样写回 plugin.json，元数据不再丢失。身份名保持稳定，跨工具部署不受影响。
 
 ### 修复
 - 企业能力库 Agent 标签页的计数提示显示为字面量 `{count} 个 Agent`（三语言均为单大括号导致 i18next 插值失效），现正确显示实际数量。

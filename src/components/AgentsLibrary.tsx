@@ -305,7 +305,9 @@ export function AgentsLibrary() {
                 )}
               >
                 <div className="mb-1 flex items-center justify-between gap-2">
-                  <span className="truncate font-medium">{agent.name}</span>
+                  <span className="truncate font-medium">
+                    {agent.display_name || agent.name}
+                  </span>
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
@@ -349,8 +351,11 @@ export function AgentsLibrary() {
       {detail && detailId && (
         <div className="ml-3 flex w-[380px] shrink-0 flex-col overflow-hidden rounded-lg border border-border bg-surface">
           <div className="flex items-center justify-between border-b border-border px-3 py-2">
-            <span className="truncate text-sm font-semibold">
-              {agents.find((a) => a.id === detailId)?.name}
+            <span className="min-w-0 flex-1 truncate text-sm font-semibold">
+              {(() => {
+                const agent = agents.find((a) => a.id === detailId);
+                return agent?.display_name || agent?.name;
+              })()}
             </span>
             <span className="flex shrink-0 items-center gap-1">
               <button

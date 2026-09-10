@@ -5,15 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.26.0] - 2026-09-10
+## [1.25.2] - 2026-09-10
 
 ### Release Overview
-- "Enterprise Skills" becomes the "Enterprise Capability Library", hosting both skills and agents; the Agent Library gains a readable detail view and search.
+- "Enterprise Skills" becomes the "Enterprise Capability Library", hosting both skills and agents; the Agent Library gains a readable detail view, search, and WorkBuddy expert display-name preservation.
 
 ### User-facing
 - **Enterprise Skills → Enterprise Capability Library**: every user-facing string (entry title, login prompts, load/error/delete copy) renamed across Simplified Chinese, Traditional Chinese, and English, covering both the Skills and Agents tabs. Server addresses and internal API paths are unchanged.
 - **Readable agent details**: the Agent Library detail panel now renders its document as Markdown (matching the skill detail experience) instead of raw text, so an agent's capabilities are easy to read.
 - **Agent Library search**: a toolbar search box filters agents by name or description in real time, mirroring the skills page.
+- **Agent display names**: importing a WorkBuddy expert now captures its `displayName` (Chinese preferred, English fallback) as a display name, so the Agent Library shows 「工程毕升自主交付专家」-style localized names on cards and in details; deploying back to WorkBuddy writes `displayName`/`profession`/`tags`/`quickPrompts` through into plugin.json, keeping metadata intact. Identity names stay stable and cross-tool deployment is unaffected.
 
 ### Fixed
 - The Agents tab counter showed the literal `{count} agents` (single-brace placeholders disabled i18next interpolation in all three languages); it now shows the real count.

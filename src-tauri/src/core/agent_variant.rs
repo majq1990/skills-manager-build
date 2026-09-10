@@ -24,7 +24,40 @@ const CODEX_DEFAULT_SANDBOX_MODE: &str = "read-only";
 pub struct ParsedAgent {
     pub name: Option<String>,
     pub description: Option<String>,
+    /// Human-facing display name extracted from the frontmatter `displayName`
+    /// field (plain string or `{en, zh}` mapping — zh preferred).
+    pub display_name: Option<String>,
     pub body: String,
+}
+
+/// Extract a display name from a frontmatter value: a plain string is used
+/// as-is; a localized mapping prefers zh, then en.
+pub fn display_name_from_yaml(value: &serde_yaml::Value) -> Option<String> {
+    match value {
+        serde_yaml::Value::String(s) => {
+            let s = s.trim();
+            (!s.is_empty()).then(|| s.to_string())
+        }
+        serde_yaml::Value::Mapping(map) => {
+            for lang in ["zh", "zh-CN", "zh-Hans", "en"] {
+                let key = serde_yaml::Value::String(lang.to_string());
+                if let Some(v) = map.get(&key).and_then(|v| v.as_str()) {
+                    let s = v.trim();
+                    if !s.is_empty() {
+                        return Some(s.to_string());
+                    }
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Parse the frontmatter of an agent markdown into a YAML value (for
+/// metadata pass-through at deploy time). `None` when unfenced/unparseable.
+pub fn frontmatter_value(content: &str) -> Option<serde_yaml::Value> {
+    split_frontmatter(content).map(|(yaml, _)| yaml)
 }
 
 /// SHA-256 of arbitrary content, hex-encoded. Used for `content_hash` /
@@ -61,6 +94,7 @@ pub fn parse_agent_markdown(content: &str) -> Option<ParsedAgent> {
     Some(ParsedAgent {
         name: field("name"),
         description: field("description"),
+        display_name: yaml.get("displayName").and_then(display_name_from_yaml),
         body,
     })
 }
@@ -255,7 +289,18 @@ pub fn generate_skill_md(parsed: &ParsedAgent) -> String {
 /// Build the minimal `.codebuddy-plugin/plugin.json` expert manifest for a
 /// WorkBuddy expert plugin. The result is written once at deploy time and
 /// is hand-editable afterwards (displayName, avatar, tags, quickPrompts…).
-pub fn generate_expert_plugin_json(name: &str, description: Option<&str>) -> Result<String> {
+///
+/// `frontmatter` (the canonical agent markdown's frontmatter, when parseable)
+/// feeds the display metadata pass-through: localized `displayName`,
+/// `profession`, `tags`, and `quickPrompts` present there are copied into the
+/// manifest so a redeployed expert keeps its WorkBuddy presentation instead
+/// of degrading to the ASCII identity name. `avatar` is deliberately not
+/// copied — it references a binary asset the variant does not carry.
+pub fn generate_expert_plugin_json(
+    name: &str,
+    description: Option<&str>,
+    frontmatter: Option<&serde_yaml::Value>,
+) -> Result<String> {
     let mut root = serde_json::Map::new();
     root.insert("name".into(), serde_json::Value::String(name.to_string()));
     root.insert(
@@ -282,6 +327,25 @@ pub fn generate_expert_plugin_json(name: &str, description: Option<&str>) -> Res
         "agentName".into(),
         serde_json::Value::String(name.to_string()),
     );
+
+    // Copy localized display metadata from the canonical frontmatter so
+    // redeploys keep what WorkBuddy rendered before the round-trip.
+    if let Some(serde_yaml::Value::Mapping(map)) = frontmatter {
+        for key in ["displayName", "profession", "tags", "quickPrompts"] {
+            let yaml_key = serde_yaml::Value::String(key.to_string());
+            if let Some(value) = map.get(&yaml_key) {
+                match serde_json::to_value(value) {
+                    Ok(json_value) => {
+                        root.insert(key.into(), json_value);
+                    }
+                    Err(err) => {
+                        log::warn!("expert plugin.json: skipping non-JSON `{key}`: {err}");
+                    }
+                }
+            }
+        }
+    }
+
     let value = serde_json::Value::Object(root);
     serde_json::to_string_pretty(&value)
         .map(|s| format!("{s}\n"))
@@ -415,6 +479,54 @@ mod tests {
     // ── parse / validate ──
 
     #[test]
+    fn display_name_parsed_from_localized_mapping_prefers_zh() {
+        let md = "---\nname: engineering-autonomous-delivery\ndescription: delivery expert\ndisplayName:\n  en: Autonomous Engineering Delivery Expert\n  zh: 工程毕升自主交付专家\n---\n\nbody\n";
+        let parsed = parse_agent_markdown(md).unwrap();
+        assert_eq!(
+            parsed.display_name.as_deref(),
+            Some("工程毕升自主交付专家")
+        );
+        assert_eq!(
+            parsed.name.as_deref(),
+            Some("engineering-autonomous-delivery")
+        );
+    }
+
+    #[test]
+    fn display_name_parsed_from_plain_string_and_absent_case() {
+        let md = "---\nname: x\ndescription: y\ndisplayName: My Expert\n---\n\nbody\n";
+        assert_eq!(
+            parse_agent_markdown(md).unwrap().display_name.as_deref(),
+            Some("My Expert")
+        );
+        assert!(parse_agent_markdown(SAMPLE_MD)
+            .unwrap()
+            .display_name
+            .is_none());
+    }
+
+    #[test]
+    fn expert_plugin_json_passes_display_metadata_through() {
+        let md = "---\nname: ead\ndescription: delivery\ndisplayName:\n  en: Delivery Expert\n  zh: 工程毕升专家\nprofession:\n  zh: 专家\ntags:\n  - 采集\nquickPrompts:\n  - zh: hi\n---\n\nbody\n";
+        let fm = frontmatter_value(md).unwrap();
+        let json = generate_expert_plugin_json("ead", Some("delivery"), Some(&fm)).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["displayName"]["zh"], "工程毕升专家");
+        assert_eq!(v["profession"]["zh"], "专家");
+        assert_eq!(v["tags"][0], "采集");
+        assert_eq!(v["quickPrompts"][0]["zh"], "hi");
+        assert_eq!(v["name"], "ead");
+        assert_eq!(v["agentName"], "ead");
+        // avatar is deliberately not synthesized from the frontmatter
+        assert!(v.get("avatar").is_none());
+
+        // no frontmatter → minimal manifest without display keys
+        let plain = generate_expert_plugin_json("ead", None, None).unwrap();
+        let pv: serde_json::Value = serde_json::from_str(&plain).unwrap();
+        assert!(pv.get("displayName").is_none());
+    }
+
+    #[test]
     fn parse_extracts_fields_and_body() {
         let parsed = parse_agent_markdown(SAMPLE_MD).unwrap();
         assert_eq!(parsed.name.as_deref(), Some("implementer"));
@@ -491,7 +603,7 @@ mod tests {
 
     #[test]
     fn expert_plugin_json_minimal_manifest() {
-        let json = generate_expert_plugin_json("my-expert", Some("does expert things")).unwrap();
+        let json = generate_expert_plugin_json("my-expert", Some("does expert things"), None).unwrap();
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(value["name"], "my-expert");
         assert_eq!(value["agents"][0], "./agents/my-expert.md");
