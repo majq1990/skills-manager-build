@@ -53,7 +53,9 @@ pub fn sync_all(dry_run: bool) -> Result<SyncReport> {
     let root = shared_root::shared_root();
     let shared_root_exists = root.exists();
     let memories = if shared_root_exists {
-        materializer::scan_and_materialize(&root)?
+        // Healing writes canonical sources back when they still carry
+        // generated artifacts; a dry run stays read-only.
+        materializer::scan_and_materialize(&root, !dry_run)?
     } else {
         Vec::new()
     };

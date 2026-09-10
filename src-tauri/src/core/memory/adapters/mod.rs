@@ -45,11 +45,33 @@ pub trait MemoryAdapter {
 /// not have a specialised adapter.
 pub struct DefaultAdapter;
 
+/// A generated SKILL.md is normally a few KB; anything past this bound means
+/// the source is carrying artifacts the materializer should have stripped, so
+/// deploy loudly refuses rather than fanning the file out to every agent
+/// (the WorkBuddy heap-blowup failure mode).
+const SKILL_BODY_WARN_BYTES: usize = 100 * 1024;
+
 impl MemoryAdapter for DefaultAdapter {
     fn deploy(&self, memory: &MaterializedMemory, target_dir: &Path) -> Result<()> {
+        if memory.skill_body.len() > SKILL_BODY_WARN_BYTES {
+            log::warn!(
+                "memory adapter: {} body is {} bytes (watchdog threshold {}), deploying anyway",
+                memory.skill_name,
+                memory.skill_body.len(),
+                SKILL_BODY_WARN_BYTES
+            );
+        }
         let skill_dir = target_dir.join(&memory.skill_name);
         std::fs::create_dir_all(&skill_dir)?;
-        std::fs::write(skill_dir.join("SKILL.md"), memory.skill_body.as_bytes())?;
+        let path = skill_dir.join("SKILL.md");
+        // Idempotent write: syncing runs every minute, and rewriting identical
+        // content would churn mtimes and make downstream agents reload.
+        if let Ok(existing) = std::fs::read(&path) {
+            if existing == memory.skill_body.as_bytes() {
+                return Ok(());
+            }
+        }
+        std::fs::write(path, memory.skill_body.as_bytes())?;
         Ok(())
     }
 
