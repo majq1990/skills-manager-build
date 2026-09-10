@@ -912,13 +912,13 @@
     "success": "Feedback submitted, thank you!",
     "failed": "Failed to submit feedback",
     "required": "Title and details are required",
-    "needLogin": "Please sign in on the Enterprise Skills page first",
+    "needLogin": "Please sign in on the Enterprise Capability Library page first",
     "feedbackBtn": "Feedback",
     "relatedAgent": "Related agent"
   },
   "publish": {
     "title": "Publish to Enterprise",
-    "subtitle": "Upload and publish \"{{name}}\" to the enterprise skill server. A security scan runs before publishing.",
+    "subtitle": "Upload and publish \"{{name}}\" to the Enterprise Capability Library server. A security scan runs automatically before publishing.",
     "skillLabel": "Skill",
     "versionLabel": "Target version (optional)",
     "versionPlaceholder": "Leave empty to auto-increment on the server",
@@ -934,7 +934,7 @@
     "failed": "Publish failed",
     "scanFailed": "Security scan failed",
     "noPermission": "You don't have upload permission. Please contact an administrator.",
-    "needLogin": "Please sign in on the Enterprise Skills page first",
+    "needLogin": "Please sign in on the Enterprise Capability Library page first",
     "batch": {
       "title": "Publish {{count}} skills",
       "toolbar": "Batch publish ({{count}})",
@@ -945,8 +945,8 @@
     }
   },
   "enterprise": {
-    "title": "Enterprise Skills",
-    "loginDescription": "Login with your Redmine account to access enterprise skills",
+    "title": "Enterprise Capability Library",
+    "loginDescription": "Sign in with your Redmine account to access the Enterprise Capability Library",
     "username": "Username",
     "usernamePlaceholder": "Enter Redmine username",
     "password": "Password",
@@ -955,17 +955,17 @@
     "logout": "Logout",
     "searchPlaceholder": "Search skills by name, description, or tags...",
     "skillCount": "{{count}} skills available",
-    "loadError": "Failed to load enterprise skills",
+    "loadError": "Failed to load the Enterprise Capability Library",
     "loginRequired": "Please login first",
     "loginSuccess": "Login successful",
     "loginFailed": "Login failed, please check your credentials",
     "logoutSuccess": "Logged out successfully",
     "logoutFailed": "Logout failed",
     "noResults": "No skills match your search",
-    "noSkills": "No enterprise skills available",
+    "noSkills": "No capabilities yet",
     "clearFilters": "Clear Filters",
     "supportDept": "Support Dept",
-    "loginConnError": "Cannot reach the enterprise skill server. Check your network or server address (Settings → Enterprise Server).",
+    "loginConnError": "Cannot reach the Enterprise Capability Library server; check the network or server address (Settings → Enterprise Server)",
     "loginServerError": "Unexpected server response, please contact your administrator.",
     "install": "Install",
     "installing": "Installing…",
@@ -975,12 +975,12 @@
     "update": "Update",
     "updateHint": "Already installed locally. Click to reinstall / update to the latest enterprise version.",
     "delete": "Delete",
-    "deleteConfirm": "Delete enterprise skill \"{{name}}\" and all published versions?",
+    "deleteConfirm": "Delete enterprise capability \"{{name}}\" and all of its published versions?",
     "deleted": "Deleted {{name}}",
     "deleteFailed": "Delete failed",
     "skillsTab": "Skills",
     "agentsTab": "Agents",
-    "agentCount": "{count} agents",
+    "agentCount": "{{count}} agents",
     "agentsEmpty": "No agents available on the enterprise server yet"
   },
   "mcp": {
@@ -1030,6 +1030,8 @@
     "upload": "Upload Agent",
     "publish": "发布",
     "publishTitle": "发布 Agent 到企业",
-    "publishSuccess": "已发布 {name} v{version}"
+    "publishSuccess": "已发布 {name} v{version}",
+    "searchPlaceholder": "Search agents by name or description…",
+    "noSearchResults": "No matching agents"
   }
 }

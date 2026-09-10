@@ -13,6 +13,7 @@ import {
   X,
   ChevronDown,
   MessageSquarePlus,
+  Search,
 } from "lucide-react";
 import { cn } from "../utils";
 import * as api from "../lib/tauri";
@@ -26,6 +27,7 @@ import type {
 import { ConfirmDialog } from "./ConfirmDialog";
 import { FeedbackDialog } from "./FeedbackDialog";
 import { AgentPublishDialog } from "./AgentPublishDialog";
+import { SkillMarkdown } from "./SkillMarkdown";
 
 const TOOL_BADGE: Record<string, string> = {
   opencode: "oc",
@@ -54,11 +56,22 @@ export function AgentsLibrary() {
   );
   const [presets, setPresets] = useState<Preset[]>([]);
   const [memberPresetIds, setMemberPresetIds] = useState<string[]>([]);
+  const [search, setSearch] = useState("");
 
   const agentCapableTools = useMemo(
     () => tools.filter((tool) => ["opencode", "codex", "workbuddy", "dsh"].includes(tool.key)),
     [tools]
   );
+
+  const visibleAgents = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return agents;
+    return agents.filter(
+      (agent) =>
+        agent.name.toLowerCase().includes(q) ||
+        (agent.description || "").toLowerCase().includes(q)
+    );
+  }, [agents, search]);
 
   const refresh = useCallback(async () => {
     try {
@@ -227,12 +240,25 @@ export function AgentsLibrary() {
   return (
     <div className="flex h-full min-h-0">
       <div className="flex min-w-0 flex-1 flex-col overflow-y-auto">
-        <div className="mb-4 flex items-center justify-between">
+        <div className="mb-4 flex items-center justify-between gap-3">
           <h1 className="flex items-center gap-2 text-lg font-semibold">
             <Bot className="h-5 w-5" />
             {t("agentLib.title")}
           </h1>
           <div className="flex items-center gap-2">
+            <div className="relative w-full max-w-[240px]">
+              <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder={t("agentLib.searchPlaceholder")}
+                className="app-input w-full pl-9 font-medium"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+              />
+            </div>
             <button
               onClick={() => void refresh()}
               className="flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-sm hover:bg-surface-hover"
@@ -263,9 +289,13 @@ export function AgentsLibrary() {
             <Bot className="h-10 w-10" />
             <p className="text-sm">{t("agentLib.empty")}</p>
           </div>
+        ) : visibleAgents.length === 0 ? (
+          <div className="flex flex-1 items-center justify-center text-sm text-muted">
+            {t("agentLib.noSearchResults")}
+          </div>
         ) : (
           <div className="grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-3">
-            {agents.map((agent) => (
+            {visibleAgents.map((agent) => (
               <div
                 key={agent.id}
                 onClick={() => void openDetail(agent.id)}
@@ -441,9 +471,9 @@ export function AgentsLibrary() {
               </div>
             )}
           </div>
-          <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap px-3 py-2 text-[11px] leading-relaxed text-tertiary">
-            {detail.content}
-          </pre>
+          <div className="min-h-0 flex-1 overflow-auto bg-surface px-3 py-2">
+            <SkillMarkdown content={detail.content} />
+          </div>
         </div>
       )}
 

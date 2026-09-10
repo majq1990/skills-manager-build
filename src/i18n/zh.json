@@ -912,13 +912,13 @@
     "success": "反馈已提交，感谢！",
     "failed": "反馈提交失败",
     "required": "标题和详细描述为必填",
-    "needLogin": "请先在『企业技能』页登录后再反馈",
+    "needLogin": "请先在『企业能力库』页登录后再反馈",
     "feedbackBtn": "反馈",
     "relatedAgent": "关联 Agent"
   },
   "publish": {
     "title": "发布到企业",
-    "subtitle": "将「{{name}}」上传并发布到企业技能服务器，发布前会自动做安全扫描。",
+    "subtitle": "将「{{name}}」上传并发布到企业能力库服务器，发布前会自动做安全扫描。",
     "skillLabel": "技能",
     "versionLabel": "目标版本（可选）",
     "versionPlaceholder": "留空则由服务端自动递增",
@@ -934,7 +934,7 @@
     "failed": "发布失败",
     "scanFailed": "安全扫描未通过",
     "noPermission": "你没有上传权限，请联系管理员",
-    "needLogin": "请先在『企业技能』页登录后再发布",
+    "needLogin": "请先在『企业能力库』页登录后再发布",
     "batch": {
       "title": "批量发布 {{count}} 个技能",
       "toolbar": "批量发布 ({{count}})",
@@ -945,8 +945,8 @@
     }
   },
   "enterprise": {
-    "title": "企业技能",
-    "loginDescription": "使用 Redmine 账号登录以访问企业技能",
+    "title": "企业能力库",
+    "loginDescription": "使用 Redmine 账号登录以访问企业能力库",
     "username": "用户名",
     "usernamePlaceholder": "输入 Redmine 用户名",
     "password": "密码",
@@ -955,16 +955,16 @@
     "logout": "退出登录",
     "searchPlaceholder": "按名称、描述或标签搜索技能...",
     "skillCount": "共 {{count}} 个技能",
-    "loadError": "加载企业技能失败",
+    "loadError": "加载企业能力库失败",
     "loginRequired": "请先登录",
     "loginSuccess": "登录成功",
     "loginFailed": "登录失败，请检查账号密码",
-    "loginConnError": "无法连接企业技能服务器，请检查网络或服务器地址（设置 → 企业服务器）",
+    "loginConnError": "无法连接企业能力库服务器，请检查网络或服务器地址（设置 → 企业服务器）",
     "loginServerError": "服务器响应异常，请联系管理员",
     "logoutSuccess": "已退出登录",
     "logoutFailed": "退出登录失败",
     "noResults": "没有匹配的技能",
-    "noSkills": "暂无企业技能",
+    "noSkills": "暂无能力",
     "clearFilters": "清除筛选",
     "supportDept": "技术支持部",
     "install": "安装",
@@ -975,12 +975,12 @@
     "update": "更新",
     "updateHint": "本地已安装，点击可重新安装/更新到企业最新版本",
     "delete": "删除",
-    "deleteConfirm": "确定删除企业技能“{{name}}”及其全部已发布版本吗？",
+    "deleteConfirm": "确定删除企业能力“{{name}}”及其全部已发布版本吗？",
     "deleted": "已删除 {{name}}",
     "deleteFailed": "删除失败",
     "skillsTab": "技能",
     "agentsTab": "Agent",
-    "agentCount": "{count} 个 Agent",
+    "agentCount": "{{count}} 个 Agent",
     "agentsEmpty": "企业服务器上还没有可用的 Agent"
   },
   "mcp": {
@@ -1030,6 +1030,8 @@
     "upload": "上传 Agent",
     "publish": "发布",
     "publishTitle": "发布 Agent 到企业",
-    "publishSuccess": "已发布 {name} v{version}"
+    "publishSuccess": "已发布 {name} v{version}",
+    "searchPlaceholder": "搜索 Agent 名称或描述…",
+    "noSearchResults": "没有匹配的 Agent"
   }
 }

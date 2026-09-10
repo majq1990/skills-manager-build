@@ -860,7 +860,9 @@
     "upload": "上傳 Agent",
     "publish": "发布",
     "publishTitle": "发布 Agent 到企业",
-    "publishSuccess": "已发布 {name} v{version}"
+    "publishSuccess": "已发布 {name} v{version}",
+    "searchPlaceholder": "搜尋 Agent 名稱或描述…",
+    "noSearchResults": "沒有符合的 Agent"
   },
   "feedback": {
     "relatedAgent": "關聯 Agent"
@@ -868,7 +870,7 @@
   "enterprise": {
     "skillsTab": "技能",
     "agentsTab": "Agent",
-    "agentCount": "{count} 個 Agent",
+    "agentCount": "{{count}} 個 Agent",
     "agentsEmpty": "企業伺服器上還沒有可用的 Agent"
   }
 }
