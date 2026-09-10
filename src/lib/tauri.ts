@@ -903,6 +903,15 @@ export const enterpriseInstallSkill = (name: string, version: string) =>
 export const enterpriseListAgents = () =>
   invoke<EnterpriseSkill[]>("enterprise_list_agents");
 
+export interface EnterpriseAgentDocument {
+  content: string;
+  display_name: string | null;
+  description: string | null;
+}
+
+export const enterpriseAgentDocument = (name: string, version: string) =>
+  invoke<EnterpriseAgentDocument>("enterprise_agent_document", { name, version });
+
 export const enterpriseUploadAgent = (
   name: string,
   centralPath: string,

@@ -5,6 +5,13 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.25.3] - 2026-09-10
+
+### 修复
+- **企业能力库 Agent 标签页补齐交互**：新增搜索框（按名称/描述/本地中文名过滤）；点击 Agent 卡片弹出详情（拉取企业包内 AGENT.md 渲染为 Markdown，与技能详情一致）；卡片标题优先显示本地已知的中文展示名。
+- **侧边栏「Agent 库」入口显示为字面量 `agents.nav`**（i18n 键路径写错且键缺失），现正确显示「Agents 库」。
+- **刷新按钮显示为字面量 `common.refresh`**（三语言均缺失该键），补齐为「刷新 / 重新整理 / Refresh」。
+
 ## [1.25.2] - 2026-09-10
 
 ### 发布概览

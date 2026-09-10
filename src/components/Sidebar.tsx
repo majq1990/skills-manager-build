@@ -170,7 +170,7 @@ export function Sidebar() {
   const NAV_ITEMS = [
     { name: t("sidebar.dashboard"), path: "/", icon: LayoutDashboard },
     { name: t("sidebar.mySkills"), path: "/my-skills", icon: Layers },
-    { name: t("agents.nav"), path: "/agents", icon: Bot },
+    { name: t("agentLib.nav"), path: "/agents", icon: Bot },
     { name: t("sidebar.installSkills"), path: "/install", icon: Download },
     { name: t("enterprise.title") || "Enterprise", path: "/enterprise", icon: Building2 },
     { name: "MCP Market", path: "/mcp-market", icon: Server },

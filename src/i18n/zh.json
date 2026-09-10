@@ -618,7 +618,8 @@
     "search": "搜索",
     "goToSettings": "设置",
     "expandAll": "展开全部",
-    "collapse": "收起"
+    "collapse": "收起",
+    "refresh": "刷新"
   },
   "addFromLibrary": {
     "title": "从技能库添加",
@@ -981,7 +982,10 @@
     "skillsTab": "技能",
     "agentsTab": "Agent",
     "agentCount": "{{count}} 个 Agent",
-    "agentsEmpty": "企业服务器上还没有可用的 Agent"
+    "agentsEmpty": "企业服务器上还没有可用的 Agent",
+    "agentSearchPlaceholder": "搜索 Agent…",
+    "docMissing": "agent 包内缺少 AGENT.md，无法展示详情",
+    "loadingDoc": "正在加载 agent 详情…"
   },
   "mcp": {
     "market": {
@@ -1009,7 +1013,7 @@
     }
   },
   "agentLib": {
-    "nav": "agent库",
+    "nav": "Agents 库",
     "title": "Agents 库",
     "import": "从工具导入",
     "importTitle": "从工具目录导入 Agent",

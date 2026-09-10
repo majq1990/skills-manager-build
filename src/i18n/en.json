@@ -618,7 +618,8 @@
     "search": "Search",
     "goToSettings": "Settings",
     "expandAll": "Show all",
-    "collapse": "Collapse"
+    "collapse": "Collapse",
+    "refresh": "Refresh"
   },
   "addFromLibrary": {
     "title": "Add from Library",
@@ -981,7 +982,10 @@
     "skillsTab": "Skills",
     "agentsTab": "Agents",
     "agentCount": "{{count}} agents",
-    "agentsEmpty": "No agents available on the enterprise server yet"
+    "agentsEmpty": "No agents available on the enterprise server yet",
+    "agentSearchPlaceholder": "Search agents…",
+    "docMissing": "AGENT.md is missing from the agent package",
+    "loadingDoc": "Loading agent details…"
   },
   "mcp": {
     "market": {
@@ -1009,7 +1013,7 @@
     }
   },
   "agentLib": {
-    "nav": "Agent Library",
+    "nav": "Agents Library",
     "title": "Agents Library",
     "import": "Import from tools",
     "importTitle": "Import agents from tool directories",

@@ -246,6 +246,62 @@ pub async fn enterprise_list_agents(
     .await?
 }
 
+#[derive(Debug, serde::Serialize)]
+pub struct EnterpriseAgentDocument {
+    pub content: String,
+    /// Localized display name parsed from the frontmatter `displayName`
+    /// (zh preferred) — lets the market detail view show 工程毕升-style names.
+    pub display_name: Option<String>,
+    pub description: Option<String>,
+}
+
+/// 拉取企业 agent 包内的 AGENT.md 文档（内存解包，不落盘），供市场详情展示。
+#[tauri::command]
+pub async fn enterprise_agent_document(
+    name: String,
+    version: String,
+) -> Result<EnterpriseAgentDocument, AppError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let zip_bytes = download_agent_zip(&name, &version)?;
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(&zip_bytes[..]))
+            .map_err(|e| AppError::internal(format!("Invalid agent package: {e}")))?;
+        let mut content: Option<String> = None;
+        for i in 0..archive.len() {
+            let mut entry = archive.by_index(i).map_err(|e| {
+                AppError::internal(format!("Invalid agent package: {e}"))
+            })?;
+            if entry.is_dir() {
+                continue;
+            }
+            let raw = entry.name().replace('\\', "/");
+            if raw != "AGENT.md" && !raw.ends_with("/AGENT.md") {
+                continue;
+            }
+            if raw.contains("..") || raw.starts_with('/') {
+                return Err(AppError::invalid_input(format!(
+                    "agent 包内含非法路径: {raw}"
+                )));
+            }
+            use std::io::Read;
+            let mut text = String::new();
+            entry.read_to_string(&mut text).map_err(|e| {
+                AppError::internal(format!("Failed to read {raw}: {e}"))
+            })?;
+            content = Some(text);
+            break;
+        }
+        let content =
+            content.ok_or_else(|| AppError::not_found("agent 包内缺少 AGENT.md"))?;
+        let parsed = crate::core::agent_variant::parse_agent_markdown(&content);
+        Ok(EnterpriseAgentDocument {
+            display_name: parsed.as_ref().and_then(|p| p.display_name.clone()),
+            description: parsed.as_ref().and_then(|p| p.description.clone()),
+            content,
+        })
+    })
+    .await?
+}
+
 /// 把本地 agent（central_path 目录内容）打包 zip 上传/发布到企业服务器。
 /// 服务端做安全扫描；失败会带出 HTTP 400 的错误信息。
 /// version 留空 = 服务端自动递增。

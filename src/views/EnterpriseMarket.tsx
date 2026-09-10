@@ -19,6 +19,7 @@ import { cn } from "../utils";
 import * as api from "../lib/tauri";
 import type { EnterpriseSkill } from "../lib/tauri";
 import { DetailSheet } from "../components/DetailSheet";
+import { SkillMarkdown } from "../components/SkillMarkdown";
 import { useApp } from "../context/AppContext";
 
 /** 统一把后端错误归一成字符串（替代散落的 `(err as any)?.message`）。 */
@@ -51,6 +52,16 @@ export function EnterpriseMarket() {
   const [agents, setAgents] = useState<EnterpriseSkill[]>([]);
   const [installedAgentNames, setInstalledAgentNames] = useState<Set<string>>(new Set());
   const [agentInstalling, setAgentInstalling] = useState<Set<string>>(new Set());
+  const [agentSearch, setAgentSearch] = useState("");
+  // 本地已知 agent 中文名（name → display_name），市场卡片优先展示
+  const [localAgentDisplayNames, setLocalAgentDisplayNames] = useState<Record<string, string>>({});
+  const [agentDoc, setAgentDoc] = useState<{
+    name: string;
+    version: string;
+    loading: boolean;
+    content: string | null;
+    display_name: string | null;
+  } | null>(null);
 
   useEffect(() => {
     checkAuth();
@@ -124,10 +135,51 @@ export function EnterpriseMarket() {
     try {
       const managed = await api.getAgents();
       setInstalledAgentNames(new Set(managed.map((a) => a.name.trim().toLowerCase())));
+      const displayNames: Record<string, string> = {};
+      for (const a of managed) {
+        if (a.display_name) displayNames[a.name.trim().toLowerCase()] = a.display_name;
+      }
+      setLocalAgentDisplayNames(displayNames);
     } catch {
       // 本地 agent 列表拿不到时忽略
     }
   };
+
+  const openAgentDoc = async (agent: EnterpriseSkill) => {
+    setAgentDoc({
+      name: agent.name,
+      version: agent.version,
+      loading: true,
+      content: null,
+      display_name: null,
+    });
+    try {
+      const doc = await api.enterpriseAgentDocument(agent.name, agent.version);
+      setAgentDoc({
+        name: agent.name,
+        version: agent.version,
+        loading: false,
+        content: doc.content,
+        display_name: doc.display_name,
+      });
+    } catch (err) {
+      setAgentDoc(null);
+      toast.error(errMsg(err) || t("enterprise.docMissing"));
+    }
+  };
+
+  const visibleAgents = useMemo(() => {
+    const q = agentSearch.trim().toLowerCase();
+    if (!q) return agents;
+    return agents.filter(
+      (agent) =>
+        agent.name.toLowerCase().includes(q) ||
+        (agent.description || "").toLowerCase().includes(q) ||
+        (localAgentDisplayNames[agent.name.trim().toLowerCase()] || "")
+          .toLowerCase()
+          .includes(q)
+    );
+  }, [agents, agentSearch, localAgentDisplayNames]);
 
   const handleInstallAgent = async (agent: EnterpriseSkill) => {
     if (agentInstalling.has(agent.name)) return;
@@ -382,6 +434,19 @@ export function EnterpriseMarket() {
             </span>
           </div>
           <div className="flex items-center gap-2">
+            <div className="relative w-full max-w-[220px]">
+              <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--color-text-muted)]" />
+              <input
+                type="text"
+                value={agentSearch}
+                onChange={(e) => setAgentSearch(e.target.value)}
+                placeholder={t("enterprise.agentSearchPlaceholder")}
+                className="app-input w-full pl-9 font-medium"
+                autoCapitalize="none"
+                autoCorrect="off"
+                spellCheck={false}
+              />
+            </div>
             <button
               onClick={() => {
                 loadAgents();
@@ -408,19 +473,26 @@ export function EnterpriseMarket() {
             <p className="text-sm text-[var(--color-text-tertiary)] text-center py-12">
               {t("enterprise.agentsEmpty")}
             </p>
+          ) : visibleAgents.length === 0 ? (
+            <p className="text-sm text-[var(--color-text-tertiary)] text-center py-12">
+              {t("agentLib.noSearchResults")}
+            </p>
           ) : (
             <div className="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-3">
-              {agents.map((agent) => {
+              {visibleAgents.map((agent) => {
                 const installed = installedAgentNames.has(agent.name.trim().toLowerCase());
                 const installing = agentInstalling.has(agent.name);
+                const displayTitle =
+                  localAgentDisplayNames[agent.name.trim().toLowerCase()] || agent.name;
                 return (
                   <div
                     key={agent.name}
-                    className="flex flex-col rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 transition-colors hover:bg-[var(--color-surface-hover)]"
+                    onClick={() => void openAgentDoc(agent)}
+                    className="cursor-pointer flex flex-col rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 transition-colors hover:bg-[var(--color-surface-hover)]"
                   >
                     <div className="mb-1 flex items-center justify-between gap-2">
                       <span className="truncate font-medium text-[var(--color-text-primary)]">
-                        {agent.name}
+                        {displayTitle}
                       </span>
                       <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold text-[var(--color-text-tertiary)] bg-[var(--color-surface-active)]">
                         v{agent.version}
@@ -435,7 +507,10 @@ export function EnterpriseMarket() {
                       </span>
                       <button
                         disabled={installing || installed}
-                        onClick={() => void handleInstallAgent(agent)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void handleInstallAgent(agent);
+                        }}
                         className="shrink-0 rounded-lg px-3 py-1.5 text-[12px] font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed bg-[var(--color-accent)] text-white hover:opacity-90"
                       >
                         {installing ? (
@@ -766,6 +841,35 @@ export function EnterpriseMarket() {
                 {selectedSkill.description}
               </p>
             </div>
+          </div>
+        )}
+      </DetailSheet>
+
+      <DetailSheet
+        open={!!agentDoc}
+        title={
+          <span className="flex items-center gap-2">
+            {agentDoc?.display_name || agentDoc?.name}
+            {agentDoc && (
+              <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold text-[var(--color-text-tertiary)] bg-[var(--color-surface-active)]">
+                v{agentDoc.version}
+              </span>
+            )}
+          </span>
+        }
+        description={agentDoc?.display_name ? agentDoc?.name : undefined}
+        onClose={() => setAgentDoc(null)}
+      >
+        {agentDoc?.loading ? (
+          <div className="mt-12 flex items-center justify-center gap-2 text-sm text-[var(--color-text-tertiary)]">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            {t("enterprise.loadingDoc")}
+          </div>
+        ) : agentDoc?.content ? (
+          <SkillMarkdown content={agentDoc.content} />
+        ) : (
+          <div className="mt-12 text-center text-[13px] text-[var(--color-text-tertiary)]">
+            {t("enterprise.docMissing")}
           </div>
         )}
       </DetailSheet>

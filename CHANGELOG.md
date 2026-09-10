@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.25.3] - 2026-09-10
+
+### Fixed
+- **Enterprise Capability Library, Agents tab interactions**: added a search box (filters by name, description, or the locally-known Chinese display name); clicking an agent card now opens a detail sheet that fetches the AGENT.md from the published package and renders it as Markdown, matching the skill detail experience; card titles prefer the locally-known display name.
+- **The sidebar "Agents Library" entry rendered the literal `agents.nav`** (wrong i18n key path, key missing); it now shows "Agents 库 / Agents 庫 / Agents Library".
+- **The refresh button rendered the literal `common.refresh`** (key missing in all three languages); added 刷新 / 重新整理 / Refresh.
+
 ## [1.25.2] - 2026-09-10
 
 ### Release Overview
