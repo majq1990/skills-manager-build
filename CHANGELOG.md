@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.25.4] - 2026-09-10
+
+### Fixed
+- **Windows installers now embed the WebView2 offline runtime**: the NSIS/MSI installers previously downloaded the 1.7MB bootstrapper at install time, which silently bails out with "already installed for the system" on the broken-registration state where the app then fails to start with "Could not find the WebView2 Runtime" (hit in the field by a colleague). The installers now bundle the full offline runtime (`offlineInstaller`), so offline and locked-down corporate images install in one pass, and damaged runtime registrations get repaired. Trade-off: the Windows installers grow to roughly 140MB.
+
 ## [1.25.3] - 2026-09-10
 
 ### Fixed

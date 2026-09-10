@@ -5,6 +5,11 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.25.4] - 2026-09-10
+
+### 修复
+- **Windows 安装包内嵌 WebView2 离线运行时**：此前安装时联网下载 1.7MB 引导器，遇到"已为系统安装"的幽灵注册状态会直接退出——应用装上了却没有可用运行时，一启动就报「Could not find the WebView2 Runtime」（同事实测踩到）。现改为安装包内置完整离线运行时（`offlineInstaller`），离线/企业受限镜像也能一次装好，且可修复损坏的运行时注册。代价是 Windows 安装包体积增大（约 140MB）。
+
 ## [1.25.3] - 2026-09-10
 
 ### 修复
