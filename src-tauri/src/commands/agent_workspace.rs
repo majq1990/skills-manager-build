@@ -509,8 +509,29 @@ mod tests {
     use crate::core::{central_repo, installer};
     use std::collections::HashMap;
 
+    /// Creating symlinks on Windows needs SeCreateSymbolicLinkPrivilege
+    /// (admin or Developer Mode). Probe it so privilege-dependent tests skip
+    /// cleanly on locked-down machines instead of failing; they still run for
+    /// real wherever symlinks work.
+    #[cfg(windows)]
+    fn windows_symlink_privilege_available() -> bool {
+        let Ok(tmp) = tempfile::tempdir() else {
+            return false;
+        };
+        let target = tmp.path().join("probe-target");
+        let link = tmp.path().join("probe-link");
+        if std::fs::create_dir_all(&target).is_err() {
+            return false;
+        }
+        std::os::windows::fs::symlink_dir(&target, &link).is_ok()
+    }
+
     #[test]
     fn importing_agent_local_skill_attaches_target_but_not_scenario() {
+        if cfg!(windows) && !windows_symlink_privilege_available() {
+            eprintln!("skipped: no Windows symlink privilege (admin or Developer Mode required)");
+            return;
+        }
         let _guard = central_repo::test_base_dir_lock();
         let temp = tempfile::tempdir().unwrap();
         central_repo::set_test_base_dir_override(Some(temp.path().join("center")));

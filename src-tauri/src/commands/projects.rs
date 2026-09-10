@@ -1123,6 +1123,23 @@ mod tests {
     use std::fs;
     use tempfile::tempdir;
 
+    /// Creating symlinks on Windows needs SeCreateSymbolicLinkPrivilege
+    /// (admin or Developer Mode). Probe it so privilege-dependent tests skip
+    /// cleanly on locked-down machines instead of failing; they still run for
+    /// real wherever symlinks work.
+    #[cfg(windows)]
+    fn windows_symlink_privilege_available() -> bool {
+        let Ok(tmp) = tempdir() else {
+            return false;
+        };
+        let target = tmp.path().join("probe-target");
+        let link = tmp.path().join("probe-link");
+        if fs::create_dir_all(&target).is_err() {
+            return false;
+        }
+        std::os::windows::fs::symlink_dir(&target, &link).is_ok()
+    }
+
     fn sample_managed_skill(
         central_path: String,
         content_hash: Option<String>,
@@ -1279,6 +1296,10 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn remove_workspace_skill_target_removes_directory_symlink_without_touching_target() {
+        if !windows_symlink_privilege_available() {
+            eprintln!("skipped: no Windows symlink privilege (admin or Developer Mode required)");
+            return;
+        }
         let tmp = tempdir().unwrap();
         let real = tmp.path().join("real-skill");
         let link = tmp.path().join("linked-skill");
