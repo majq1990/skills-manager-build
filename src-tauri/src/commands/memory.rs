@@ -1,16 +1,25 @@
+use std::sync::Arc;
+
+use tauri::State;
+
 use crate::core::error::AppError;
 use crate::core::memory::{self, sources::ReconcileReport, store::SavedMemory, sync::SyncReport};
+use crate::core::skill_store::SkillStore;
 
 #[tauri::command]
-pub async fn memory_get_status() -> Result<SyncReport, AppError> {
-    tauri::async_runtime::spawn_blocking(|| memory::sync::sync_all(true))
+pub async fn memory_get_status(
+    store: State<'_, Arc<SkillStore>>,
+) -> Result<SyncReport, AppError> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || memory::sync::sync_all_with(Some(&store), true))
         .await?
         .map_err(AppError::internal)
 }
 
 #[tauri::command]
-pub async fn memory_sync() -> Result<SyncReport, AppError> {
-    tauri::async_runtime::spawn_blocking(|| memory::sync::sync_all(false))
+pub async fn memory_sync(store: State<'_, Arc<SkillStore>>) -> Result<SyncReport, AppError> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || memory::sync::sync_all_with(Some(&store), false))
         .await?
         .map_err(AppError::internal)
 }
@@ -29,7 +38,9 @@ pub async fn memory_remember(
     content: String,
     memory_type: String,
     source_agent: Option<String>,
+    store: State<'_, Arc<SkillStore>>,
 ) -> Result<SavedMemory, AppError> {
+    let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let saved = memory::store::remember(
             &title,
@@ -38,7 +49,7 @@ pub async fn memory_remember(
             &memory_type,
             source_agent.as_deref(),
         )?;
-        memory::sync::sync_all(false)?;
+        memory::sync::sync_all_with(Some(&store), false)?;
         Ok::<SavedMemory, anyhow::Error>(saved)
     })
     .await?

@@ -85,6 +85,8 @@ export interface MemoryToolReport {
   deployed: number;
   removed: number;
   skipped: boolean;
+  /** True when the tool is excluded from memory deployment (its memory-* skills get swept). */
+  excluded: boolean;
   reason: string | null;
   error: string | null;
 }

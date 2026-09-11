@@ -2375,12 +2375,14 @@ fn run_memory(args: MemoryArgs, json: bool) -> anyhow::Result<()> {
             );
         }
         MemoryCommand::Sync { dry_run } => {
-            let report = memory::sync::sync_all(dry_run)?;
+            let store = app_state::initialize_cli_store()?;
+            let report = memory::sync::sync_all_with(Some(&store), dry_run)?;
             print_json(&report, json);
         }
         MemoryCommand::Status => {
             // Dry-run summary — always safe to invoke.
             let report = memory::sync::sync_all(true)?;
+            print_json(&report, json);
             print_json(&report, json);
         }
         MemoryCommand::Migrate { dry_run } => {
@@ -2401,7 +2403,8 @@ fn run_memory(args: MemoryArgs, json: bool) -> anyhow::Result<()> {
                 &memory_type,
                 source_agent.as_deref(),
             )?;
-            let sync = memory::sync::sync_all(false)?;
+            let store = app_state::initialize_cli_store()?;
+            let sync = memory::sync::sync_all_with(Some(&store), false)?;
             print_json(&serde_json::json!({ "saved": saved, "sync": sync }), json);
         }
     }

@@ -960,16 +960,23 @@ pub fn run() {
             // Keep native agent memories converged without requiring the user
             // to visit the Memory page first. This is best-effort and runs off
             // the UI thread; failures remain visible in logs and the GUI status.
-            tauri::async_runtime::spawn_blocking(|| {
-                if let Err(err) = crate::core::memory::sync::sync_all(false) {
+            let store_for_memory = store_for_setup.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                if let Err(err) =
+                    crate::core::memory::sync::sync_all_with(Some(&store_for_memory), false)
+                {
                     log::warn!("startup unified-memory sync failed: {err}");
                 }
             });
-            tauri::async_runtime::spawn(async {
+            let store_for_loop = store_for_setup.clone();
+            tauri::async_runtime::spawn(async move {
                 loop {
                     tokio::time::sleep(std::time::Duration::from_secs(60)).await;
-                    let _ = tauri::async_runtime::spawn_blocking(|| {
-                        if let Err(err) = crate::core::memory::sync::sync_all(false) {
+                    let store = store_for_loop.clone();
+                    let _ = tauri::async_runtime::spawn_blocking(move || {
+                        if let Err(err) =
+                            crate::core::memory::sync::sync_all_with(Some(&store), false)
+                        {
                             log::warn!("periodic unified-memory sync failed: {err}");
                         }
                     })

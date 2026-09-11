@@ -5,6 +5,14 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.25.6] - 2026-09-10
+
+### 新增
+- **记忆同步目标工具可配置**：统一记忆页「跨 Agent 分发」区每个 Agent 增加勾选「同步记忆」。取消勾选后写入 `memory_excluded_tools` 设置，该 Agent 目录里的 `memory-*` 条目与 bridge 会在下次同步时被清理、且不再重新生成——彻底解决「清理 dsh 的 274 个 memory skill 后 60 秒被灌回」的问题（排除列表持久化，桌面端定时同步、CLI 同步、GUI 手动同步三处全部遵守）。
+
+### 变更
+- 记忆同步内部接口 `sync_all` → `sync_all_with(store, dry_run)`，读取排除设置；无 store 的旧调用保持兼容（不排除任何工具）。
+
 ## [1.25.5] - 2026-09-10
 
 ### 修复

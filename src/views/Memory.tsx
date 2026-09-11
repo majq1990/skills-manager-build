@@ -24,6 +24,7 @@ export function Memory() {
   const [description, setDescription] = useState("");
   const [content, setContent] = useState("");
   const [memoryType, setMemoryType] = useState("reference");
+  const [savingExcluded, setSavingExcluded] = useState(false);
 
   const load = async () => {
     try {
@@ -56,6 +57,30 @@ export function Memory() {
       toast.error(`统一记忆失败：${String(error)}`);
     } finally {
       setSyncing(false);
+    }
+  };
+
+  const toggleToolExcluded = async (toolKey: string, currentlyExcluded: boolean) => {
+    const current = new Set(
+      (report?.tools ?? []).filter((t) => t.excluded).map((t) => t.tool_key)
+    );
+    if (currentlyExcluded) current.delete(toolKey);
+    else current.add(toolKey);
+    setSavingExcluded(true);
+    try {
+      await api.setSettings("memory_excluded_tools", JSON.stringify([...current]));
+      const next = await api.memorySync();
+      setReport(next);
+      const tool = next.tools.find((x) => x.tool_key === toolKey);
+      toast.success(
+        currentlyExcluded
+          ? `${tool?.display_name ?? toolKey} 已恢复记忆同步（部署 ${tool?.deployed ?? 0} 条）`
+          : `${tool?.display_name ?? toolKey} 已停止记忆同步（清理 ${tool?.removed ?? 0} 项 memory-*）`
+      );
+    } catch (error) {
+      toast.error(`保存失败：${String(error)}`);
+    } finally {
+      setSavingExcluded(false);
     }
   };
 
@@ -157,9 +182,33 @@ export function Memory() {
           </section>
           <section className="rounded-lg border border-border bg-surface overflow-hidden">
             <div className="px-4 py-3 border-b border-border text-sm font-semibold text-primary">跨 Agent 分发</div>
+            <div className="px-4 py-2 text-xs text-muted border-b border-border-subtle">取消勾选「同步记忆」后，该 Agent 目录里的 memory-* 条目会在下次同步时被清理，且不再重新生成。</div>
             <div className="divide-y divide-border-subtle max-h-72 overflow-auto">
               {(report?.tools ?? []).map((tool) => (
-                <div key={tool.tool_key} className="px-4 py-3 flex items-center justify-between gap-3"><div><div className="text-sm text-secondary">{tool.display_name}</div><div className="text-xs text-muted">{tool.adapter}</div></div><div className="text-right"><div className={tool.error ? "text-xs text-red-500" : "text-xs text-emerald-500"}>{tool.error ? "异常" : "就绪"}</div><div className="text-xs text-muted">{tool.deployed} 条</div></div></div>
+                <div key={tool.tool_key} className="px-4 py-3 flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-sm text-secondary">{tool.display_name}</div>
+                    <div className="text-xs text-muted">{tool.adapter}</div>
+                  </div>
+                  <div className="flex items-center gap-3 shrink-0">
+                    <div className="text-right">
+                      <div className={tool.error ? "text-xs text-red-500" : tool.excluded ? "text-xs text-muted" : "text-xs text-emerald-500"}>
+                        {tool.error ? "异常" : tool.excluded ? "已排除" : "就绪"}
+                      </div>
+                      <div className="text-xs text-muted">{tool.excluded ? `清理 ${tool.removed} 项` : `${tool.deployed} 条`}</div>
+                    </div>
+                    <label className="flex items-center gap-1.5 text-[11px] text-muted cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={!tool.excluded}
+                        disabled={savingExcluded}
+                        onChange={() => void toggleToolExcluded(tool.tool_key, tool.excluded)}
+                        className="accent-emerald-500"
+                      />
+                      同步记忆
+                    </label>
+                  </div>
+                </div>
               ))}
             </div>
           </section>

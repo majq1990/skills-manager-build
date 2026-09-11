@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.25.6] - 2026-09-10
+
+### Added
+- **Per-tool memory sync opt-out**: the Unified Memory page's "Cross-Agent Deployment" section now has a "sync memory" checkbox per agent. Unchecking it persists a `memory_excluded_tools` setting; on the next sync that agent's `memory-*` entries and bridge are swept and never redeployed — fixing the "cleaned 274 memory skills out of dsh, they came back within 60 seconds" cycle. The exclusion is honored by the desktop periodic sync, the CLI sync, and manual GUI syncs alike.
+
+### Changed
+- Internal memory sync entry point `sync_all` → `sync_all_with(store, dry_run)` to read the exclusion setting; store-less callers keep working via the old wrapper (no exclusions).
+
 ## [1.25.5] - 2026-09-10
 
 ### Fixed
