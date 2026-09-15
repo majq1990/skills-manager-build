@@ -648,6 +648,43 @@ pub fn export_agent(store: &super::skill_store::SkillStore, agent_id: &str, dest
     Ok(out)
 }
 
+/// Remove the WorkBuddy marketplace.json entry for `agent_name` on tool
+/// `tool_key` (ExpertPlugin tools only). Idempotent: no-op when the tool is
+/// not an expert-plugin tool, the marketplace file is absent, or the entry
+/// is already gone.
+fn clear_expert_marketplace_entry(
+    store: &super::skill_store::SkillStore,
+    tool_key: &str,
+    agent_name: &str,
+) {
+    let Some(adapter) = find_adapter_with_store(store, tool_key) else {
+        return;
+    };
+    if adapter.agent_deploy_kind != Some(AgentDeployKind::ExpertPlugin) {
+        return;
+    }
+    let Some(plugins_root) = adapter.agents_dir() else {
+        return;
+    };
+    let Some(marketplace_dir) = plugins_root.parent() else {
+        return;
+    };
+    let marketplace_file = marketplace_dir
+        .join(".codebuddy-plugin")
+        .join("marketplace.json");
+    if let Ok(existing) = std::fs::read_to_string(&marketplace_file) {
+        if let Ok(Some(updated)) = remove_expert_marketplace_entry(&existing, agent_name) {
+            if let Err(err) = std::fs::write(&marketplace_file, updated) {
+                log::warn!(
+                    "agent delete: failed to update marketplace.json for {}: {}",
+                    marketplace_file.display(),
+                    err
+                );
+            }
+        }
+    }
+}
+
 /// Delete a centrally managed agent: undeploy all recorded targets, then
 /// remove the central directory and the DB rows.
 pub fn delete_agent_artifact(store: &super::skill_store::SkillStore, agent_id: &str) -> Result<()> {
@@ -656,6 +693,16 @@ pub fn delete_agent_artifact(store: &super::skill_store::SkillStore, agent_id: &
         .ok_or_else(|| anyhow!("agent '{agent_id}' not found"))?;
     for target in store.get_targets_for_agent(agent_id)? {
         sync_engine::remove_agent_target(&PathBuf::from(&target.target_path)).ok();
+    }
+    // Clear WorkBuddy marketplace.json entries for EVERY agent-capable tool —
+    // not just recorded targets: the DB target rows can already be gone while
+    // the plugin registry entry survives, and WorkBuddy renders its expert
+    // list from that registry, so a stale entry means the expert is still
+    // visible after deletion. Idempotent per tool.
+    for adapter in super::tool_adapters::all_tool_adapters(store) {
+        if adapter.supports_agents() && adapter.is_installed() {
+            clear_expert_marketplace_entry(store, &adapter.key, &agent.name);
+        }
     }
     let central_dir = PathBuf::from(&agent.central_path);
     if central_dir.is_dir() {
