@@ -897,16 +897,22 @@ pub fn run() {
             // registered on import: they have a center record but no target,
             // leaving them button-less in the workspace. Idempotent and cheap
             // once repaired.
-            let step = Instant::now();
-            let repaired =
-                commands::agent_workspace::backfill_stranded_agent_targets(&store_for_setup);
-            if repaired > 0 {
+            //
+            // Runs OFF the startup critical path: the scan hashes every
+            // managed skill in every agent dir (hundreds of `memory-*` dirs
+            // included) and measured 11 minutes on a loaded machine — that
+            // used to block the window on a spinner the whole time.
+            let store_for_backfill = store_for_setup.clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                let step = Instant::now();
+                let repaired =
+                    commands::agent_workspace::backfill_stranded_agent_targets(&store_for_backfill);
                 log::info!(
-                    "startup: backfilled {} stranded agent skill target(s) in {} ms",
-                    repaired,
-                    step.elapsed().as_millis()
+                    "startup: backfill scan finished in {} ms (repaired {} stranded agent skill target(s))",
+                    step.elapsed().as_millis(),
+                    repaired
                 );
-            }
+            });
 
             let step = Instant::now();
             if is_tray_icon_enabled(&store_for_setup) {
