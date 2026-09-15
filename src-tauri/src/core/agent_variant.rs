@@ -99,6 +99,57 @@ pub fn parse_agent_markdown(content: &str) -> Option<ParsedAgent> {
     })
 }
 
+/// Rewrite a canonical AGENT.md into the shape opencode actually accepts.
+///
+/// opencode validates every file it finds under its agents directory and
+/// SILENTLY ignores the ones it cannot parse. Its schema wants a `description`
+/// plus a `mode` (`primary` / `subagent`), while canonical definitions imported
+/// from WorkBuddy/CodeBuddy carry `displayName` / `profession` / `maxTurns` /
+/// `skills` and no `mode` at all — so a verbatim deploy never showed up in
+/// opencode's agent picker (2026-09-15 field report). Keep only the keys
+/// opencode understands, default `mode` to `subagent`, leave the body alone.
+pub fn to_opencode_agent_markdown(canonical: &str) -> String {
+    const OPENCODE_KEYS: [&str; 6] = [
+        "description",
+        "mode",
+        "model",
+        "temperature",
+        "tools",
+        "permission",
+    ];
+
+    let Some((yaml, body)) = split_frontmatter(canonical) else {
+        return canonical.to_string();
+    };
+    let serde_yaml::Value::Mapping(mapping) = &yaml else {
+        return canonical.to_string();
+    };
+
+    let mut kept = serde_yaml::Mapping::new();
+    for key in OPENCODE_KEYS {
+        let k = serde_yaml::Value::String(key.to_string());
+        if let Some(value) = mapping.get(&k) {
+            kept.insert(k, value.clone());
+        }
+    }
+    let mode_key = serde_yaml::Value::String("mode".to_string());
+    if !kept.contains_key(&mode_key) {
+        kept.insert(
+            mode_key,
+            serde_yaml::Value::String("subagent".to_string()),
+        );
+    }
+    // opencode reads the agent name from the file name; a `name:` key is noise.
+
+    match serde_yaml::to_string(&kept) {
+        Ok(frontmatter) => format!("---
+{}---
+
+{}", frontmatter, body.trim_start()),
+        Err(_) => canonical.to_string(),
+    }
+}
+
 /// Validate a candidate agent definition per the design spec 搂5.2:
 /// parseable frontmatter required; empty `description` warns via the
 /// returned `Ok(Some(warning))`; an empty body with no `prompt` field is
@@ -477,6 +528,42 @@ mod tests {
     const SAMPLE_MD: &str = "---\nname: implementer\ndescription: 瀹炴柦浠ｇ爜淇敼\nmode: subagent\n---\n\nYou are an implementer.\n";
 
     // ── parse / validate ──
+
+    #[test]
+    fn opencode_rewrite_strips_foreign_keys_and_adds_mode() {
+        let canonical = "---
+name: ead
+description: delivery expert
+displayName:
+  en: Delivery Expert
+  zh: 工程专家
+profession:
+  zh: 专家
+maxTurns: 80
+skills:
+  - a
+---
+
+# body
+";
+        let out = to_opencode_agent_markdown(canonical);
+        assert!(out.contains("mode: subagent"), "missing mode: {out}");
+        assert!(out.contains("description:"), "missing description: {out}");
+        assert!(!out.contains("displayName"), "foreign key kept: {out}");
+        assert!(!out.contains("maxTurns"), "foreign key kept: {out}");
+        assert!(!out.contains("name: ead"), "name key kept: {out}");
+        assert!(out.contains("# body"), "body lost: {out}");
+
+        // an already-opencode-shaped file keeps its own mode
+        let native = "---
+description: x
+mode: primary
+---
+
+body
+";
+        assert!(to_opencode_agent_markdown(native).contains("mode: primary"));
+    }
 
     #[test]
     fn display_name_parsed_from_localized_mapping_prefers_zh() {

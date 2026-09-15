@@ -438,12 +438,26 @@ fn deploy_with_adapter(
                 .agents_dir()
                 .ok_or_else(|| anyhow!("tool '{}' has no agents dir", adapter.key))?;
             let target = agents_root.join(format!("{}.{ext}", agent.name));
-            let current_hash = content_sha256(&std::fs::read(file)?);
+            // opencode validates agent frontmatter and silently drops files it
+            // cannot parse; canonical definitions coming from WorkBuddy carry
+            // foreign keys and no `mode`. Stage a rewritten copy for it.
+            let deploy_source: PathBuf = if adapter.key == "opencode" && ext == "md" {
+                let canonical = std::fs::read_to_string(file)?;
+                let rewritten = agent_variant::to_opencode_agent_markdown(&canonical);
+                let stage = central_repo::agent_staging_dir().join(&agent.name);
+                std::fs::create_dir_all(&stage)?;
+                let staged = stage.join("opencode.md");
+                std::fs::write(&staged, rewritten)?;
+                staged
+            } else {
+                file.to_path_buf()
+            };
+            let current_hash = content_sha256(&std::fs::read(&deploy_source)?);
             let last_hash = store
                 .get_agent_target(agent_id, &adapter.key)?
                 .and_then(|t| t.source_hash);
             sync_engine::sync_agent_file(
-                file,
+                &deploy_source,
                 &target,
                 mode,
                 last_hash.as_deref(),
