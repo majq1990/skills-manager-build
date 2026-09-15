@@ -132,12 +132,13 @@ pub fn to_opencode_agent_markdown(canonical: &str) -> String {
             kept.insert(k, value.clone());
         }
     }
+    // opencode's own default when `mode` is absent is `all` (usable both as a
+    // primary agent — visible in the Tab switcher — and as a subagent). Be
+    // explicit: `subagent` alone would hide the agent from the agent picker,
+    // which is exactly what users reported as "deployed but invisible".
     let mode_key = serde_yaml::Value::String("mode".to_string());
     if !kept.contains_key(&mode_key) {
-        kept.insert(
-            mode_key,
-            serde_yaml::Value::String("subagent".to_string()),
-        );
+        kept.insert(mode_key, serde_yaml::Value::String("all".to_string()));
     }
     // opencode reads the agent name from the file name; a `name:` key is noise.
 
@@ -547,7 +548,7 @@ skills:
 # body
 ";
         let out = to_opencode_agent_markdown(canonical);
-        assert!(out.contains("mode: subagent"), "missing mode: {out}");
+        assert!(out.contains("mode: all"), "missing mode: {out}");
         assert!(out.contains("description:"), "missing description: {out}");
         assert!(!out.contains("displayName"), "foreign key kept: {out}");
         assert!(!out.contains("maxTurns"), "foreign key kept: {out}");
