@@ -444,7 +444,11 @@ fn deploy_with_adapter(
             let deploy_source: PathBuf = if adapter.key == "opencode" && ext == "md" {
                 let canonical = std::fs::read_to_string(file)?;
                 let rewritten = agent_variant::to_opencode_agent_markdown(&canonical);
-                let stage = central_repo::agent_staging_dir().join(&agent.name);
+                // Use a staging dir of its own: the ExpertPlugin branch stages
+                // the whole `agent_staging_dir/<agent>` tree and syncs it as one
+                // unit, so dropping a rewritten md there would leak the file
+                // into the WorkBuddy plugin package.
+                let stage = central_repo::agent_staging_dir().join(format!("{}-opencode", agent.name));
                 std::fs::create_dir_all(&stage)?;
                 let staged = stage.join("opencode.md");
                 std::fs::write(&staged, rewritten)?;
