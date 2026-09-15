@@ -185,8 +185,20 @@ export function EnterpriseMarket() {
     if (agentInstalling.has(agent.name)) return;
     setAgentInstalling((prev) => new Set(prev).add(agent.name));
     try {
-      await api.enterpriseInstallAgent(agent.name, agent.version);
-      toast.success(`${agent.name} ${t("enterprise.installed")}`);
+      const result = await api.enterpriseInstallAgent(agent.name, agent.version);
+      const parts: string[] = [];
+      if (result.deployed.length > 0) {
+        parts.push(`已部署到 ${result.deployed.join(" / ")}`);
+      }
+      if (result.failed.length > 0) {
+        parts.push(`未部署：${result.failed.join("；")}`);
+      }
+      toast.success(
+        `${agent.name} ${t("enterprise.installed")}${parts.length ? ` · ${parts.join("；")}` : ""}`,
+        result.failed.length > 0
+          ? { description: t("enterprise.agentDeployPartialHint") }
+          : undefined
+      );
       setInstalledAgentNames((prev) => new Set(prev).add(agent.name.trim().toLowerCase()));
     } catch (err) {
       const msg = errMsg(err);

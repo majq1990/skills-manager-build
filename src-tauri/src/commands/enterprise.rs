@@ -336,15 +336,35 @@ pub async fn enterprise_upload_agent(
 
 /// 从企业服务器下载指定 agent 版本并安装进中央库
 /// （~/.skills-manager/agents/<name>/，AGENT.md + 变体文件原样保留）。
+#[derive(Debug, serde::Serialize)]
+pub struct EnterpriseAgentInstallResult {
+    pub agent: crate::core::agent_store::AgentRecord,
+    /// Tool keys the agent was deployed to right after install.
+    pub deployed: Vec<String>,
+    /// `"<tool>: <error>"` for tools the deploy attempt failed on
+    /// (e.g. codex without a generated variant).
+    pub failed: Vec<String>,
+}
+
 #[tauri::command]
 pub async fn enterprise_install_agent(
     name: String,
     version: String,
     store: tauri::State<'_, std::sync::Arc<crate::core::skill_store::SkillStore>>,
-) -> Result<crate::core::agent_store::AgentRecord, AppError> {
+) -> Result<EnterpriseAgentInstallResult, AppError> {
     let store = store.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        crate::core::agent_service::install_enterprise_agent(&store, &name, &version)
+        let agent = crate::core::agent_service::install_enterprise_agent(&store, &name, &version)?;
+        // Installing into the central library alone leaves the agent invisible
+        // in every tool (they only read their own deployment dirs), so
+        // "安装成功" used to be a lie. Deploy to the enabled tools right away.
+        let (deployed, failed) =
+            crate::core::agent_service::deploy_agent_to_enabled_tools(&store, &agent.id);
+        Ok::<_, anyhow::Error>(EnterpriseAgentInstallResult {
+            agent,
+            deployed,
+            failed,
+        })
     })
     .await?
     .map_err(AppError::db)

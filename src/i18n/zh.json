@@ -475,7 +475,7 @@
     "restartToApply": "更新已安装，重启应用即可生效。",
     "updateError": "自动更新失败，正在跳转下载页…",
     "reportIssue": "报告问题",
-    "reportIssueHint": "复制应用 / 系统信息和最近日志摘要到剪贴板并打开新的 GitHub issue",
+    "reportIssueHint": "自动收集应用/系统信息与最近日志摘要，通过反馈渠道直接提交（无需 GitHub issue）",
     "reportIssueExportHint": "如果问题复杂，请点击设置 → 关于中的「导出日志」按钮，把生成的 zip 拖到 issue 附件区。",
     "diagnosticsCopied": "诊断信息已复制，请粘贴到 GitHub issue 中。",
     "diagnosticsCopyManual": "无法访问剪贴板，请手动复制下方信息：",
@@ -985,7 +985,8 @@
     "agentsEmpty": "企业服务器上还没有可用的 Agent",
     "agentSearchPlaceholder": "搜索 Agent…",
     "docMissing": "agent 包内缺少 AGENT.md，无法展示详情",
-    "loadingDoc": "正在加载 agent 详情…"
+    "loadingDoc": "正在加载 agent 详情…",
+    "agentDeployPartialHint": "部分 Agent 未部署（例如缺少对应工具的 variant）；可在 Agents 库打开该 Agent 手动生成 variant 后重试部署。"
   },
   "mcp": {
     "market": {

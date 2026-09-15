@@ -475,7 +475,7 @@
     "restartToApply": "Update installed. Restart the app to apply.",
     "updateError": "Auto-update failed. Opening download page…",
     "reportIssue": "Report Issue",
-    "reportIssueHint": "Copy app/OS info and recent log excerpt to clipboard and open a new GitHub issue",
+    "reportIssueHint": "Auto-collects app/system info and a recent log excerpt, then submits it directly through the in-app feedback channel (no GitHub issue needed).",
     "reportIssueExportHint": "If the issue is complex, click 'Export Logs' in Settings → About and attach the zip to this issue.",
     "diagnosticsCopied": "Diagnostic info copied. Paste it into the GitHub issue.",
     "diagnosticsCopyManual": "Could not access clipboard — please copy the info below manually:",
@@ -985,7 +985,8 @@
     "agentsEmpty": "No agents available on the enterprise server yet",
     "agentSearchPlaceholder": "Search agents…",
     "docMissing": "AGENT.md is missing from the agent package",
-    "loadingDoc": "Loading agent details…"
+    "loadingDoc": "Loading agent details…",
+    "agentDeployPartialHint": "Some agents were not deployed (e.g. a variant for that tool is missing); open the agent in the Agents Library to generate the variant and deploy again."
   },
   "mcp": {
     "market": {

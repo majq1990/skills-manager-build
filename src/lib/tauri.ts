@@ -926,7 +926,11 @@ export const enterpriseUploadAgent = (
   );
 
 export const enterpriseInstallAgent = (name: string, version: string) =>
-  invoke<AgentRecord>("enterprise_install_agent", { name, version });
+  invoke<{
+    agent: AgentRecord;
+    deployed: string[];
+    failed: string[];
+  }>("enterprise_install_agent", { name, version });
 
 export const enterpriseSubmitFeedback = (
   feedbackType: string,

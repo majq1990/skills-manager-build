@@ -730,6 +730,29 @@ pub fn agent_capable_installed_adapters(store: &SkillStore) -> Vec<ToolAdapter> 
         .collect()
 }
 
+/// Deploy an agent to every agent-capable, installed and globally-enabled
+/// tool, best-effort. Returns the tool keys that deployed and the failures as
+/// `"<tool>: <error>"` strings.
+///
+/// Used right after an install (enterprise market, upload) so that "installed"
+/// actually means "visible in the tools": installing into the central library
+/// alone left agents invisible in WorkBuddy/opencode, which read only their own
+/// deployment directories.
+pub fn deploy_agent_to_enabled_tools(
+    store: &SkillStore,
+    agent_id: &str,
+) -> (Vec<String>, Vec<String>) {
+    let mut deployed = Vec::new();
+    let mut failed = Vec::new();
+    for adapter in agent_capable_installed_adapters(store) {
+        match sync_agent_to_tool(store, agent_id, &adapter.key) {
+            Ok(_) => deployed.push(adapter.key.clone()),
+            Err(err) => failed.push(format!("{}: {err}", adapter.key)),
+        }
+    }
+    (deployed, failed)
+}
+
 /// Tools a scenario agent deploys to: agent-capable × installed × enabled ×
 /// scenario toggle. Missing toggle rows are defaulted to enabled first.
 pub fn enabled_tools_for_scenario_agent(

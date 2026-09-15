@@ -426,7 +426,7 @@
     "restartToApply": "更新已安裝，重新啟動應用即可生效。",
     "updateError": "自動更新失敗，正在跳轉下載頁…",
     "reportIssue": "回報問題",
-    "reportIssueHint": "複製應用 / 系統資訊和最近日誌摘要到剪貼簿並開啟新的 GitHub issue",
+    "reportIssueHint": "自動收集應用/系統資訊與最近日誌摘要，透過回饋管道直接提交（無需 GitHub issue）",
     "reportIssueExportHint": "如果問題複雜，請點擊設定 → 關於中的「匯出日誌」按鈕，把產生的 zip 拖到 issue 附件區。",
     "diagnosticsCopied": "診斷資訊已複製，請貼到 GitHub issue 中。",
     "diagnosticsCopyManual": "無法存取剪貼簿，請手動複製下方資訊：",
@@ -875,6 +875,7 @@
     "agentsEmpty": "企業伺服器上還沒有可用的 Agent",
     "agentSearchPlaceholder": "搜尋 Agent…",
     "docMissing": "agent 套件缺少 AGENT.md，無法展示詳情",
-    "loadingDoc": "正在載入 agent 詳情…"
+    "loadingDoc": "正在載入 agent 詳情…",
+    "agentDeployPartialHint": "部分 Agent 未部署（例如缺少對應工具的 variant）；可在 Agents 庫開啟該 Agent 手動產生 variant 後重試部署。"
   }
 }
