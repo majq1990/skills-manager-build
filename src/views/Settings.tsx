@@ -49,7 +49,6 @@ import { toast } from "sonner";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
-import { writeText as clipboardWriteText } from "@tauri-apps/plugin-clipboard-manager";
 import { check as checkUpdater } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { open as dialogOpen, confirm as dialogConfirm } from "@tauri-apps/plugin-dialog";
@@ -176,6 +175,8 @@ export function Settings() {
   const [reportingIssue, setReportingIssue] = useState(false);
   const [exportingLogs, setExportingLogs] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [feedbackPrefill, setFeedbackPrefill] = useState<string | undefined>(undefined);
+  const [feedbackDefaultType, setFeedbackDefaultType] = useState<string | undefined>(undefined);
   const [lastPanic, setLastPanic] = useState<api.PanicInfo | null>(null);
   const [centralRepoPath, setCentralRepoPath] = useState("");
   const [centralRepoPathOverride, setCentralRepoPathOverride] = useState<string | null>(null);
@@ -594,44 +595,25 @@ export function Settings() {
         );
       }
       if (logExcerpt) {
+        // 反馈描述里放不下完整日志摘要，只保留最近一段；完整日志走「导出日志」。
+        const excerptLines = logExcerpt.excerpt.split("\n");
+        const trimmed = excerptLines.slice(-60).join("\n");
         parts.push(
           "",
-          `**Recent log** (\`${logExcerpt.log_path}\`, ${logExcerpt.line_count} lines${logExcerpt.has_warnings ? ", includes warnings/errors" : ""})`,
+          `**Recent log** (\`${logExcerpt.log_path}\`, 最近 ${Math.min(60, logExcerpt.line_count)} 行 / 共 ${logExcerpt.line_count} 行${logExcerpt.has_warnings ? ", 含警告/错误" : ""})`,
           "",
           "```log",
-          logExcerpt.excerpt,
+          trimmed,
           "```",
           "",
           `> ${t("settings.reportIssueExportHint")}`,
         );
       }
       const md = parts.join("\n");
-      let copied = false;
-      try {
-        await clipboardWriteText(md);
-        copied = true;
-      } catch (err) {
-        console.error("Clipboard write failed", err);
-        try {
-          await navigator.clipboard.writeText(md);
-          copied = true;
-        } catch (err2) {
-          console.error("Browser clipboard fallback also failed", err2);
-        }
-      }
-      if (copied) {
-        toast.success(t("settings.diagnosticsCopied"));
-        if (panicInfo) {
-          try {
-            await api.clearLastPanic();
-          } catch (err) {
-            console.warn("Failed to clear last_panic.log", err);
-          }
-          setLastPanic(null);
-        }
-      } else {
-        toast.message(t("settings.diagnosticsCopyManual"), { description: md });
-      }
+      // 报告问题走内部反馈渠道（GitHub issue 对内部用户不可达），诊断信息自动预填。
+      setFeedbackPrefill(md);
+      setFeedbackDefaultType("工具问题");
+      setFeedbackOpen(true);
     } catch (error) {
       console.error("Failed to prepare diagnostics", error);
       toast.error(t("common.error"));
@@ -1764,7 +1746,11 @@ export function Settings() {
               </button>
               <button
                 type="button"
-                onClick={() => setFeedbackOpen(true)}
+                onClick={() => {
+                  setFeedbackPrefill(undefined);
+                  setFeedbackDefaultType(undefined);
+                  setFeedbackOpen(true);
+                }}
                 className={`${actionButtonClass} bg-surface-hover hover:bg-surface-active text-tertiary border-border`}
               >
                 <MessageSquarePlus className="w-3 h-3" />
@@ -1790,7 +1776,13 @@ export function Settings() {
       </div>
       <FeedbackDialog
         open={feedbackOpen}
-        defaultType="工具问题"
+        defaultType={feedbackDefaultType ?? "工具问题"}
+        prefillDescription={feedbackPrefill}
+        onSubmitted={() => {
+          // 诊断里已带上 panic 信息，提交成功后清掉横幅与记录。
+          api.clearLastPanic().catch(() => {});
+          setLastPanic(null);
+        }}
         onClose={() => setFeedbackOpen(false)}
       />
     </div>

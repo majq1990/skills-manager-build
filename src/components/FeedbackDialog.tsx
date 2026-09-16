@@ -19,24 +19,36 @@ interface Props {
   skill?: string;
   /** 关联 Agent（传了则显示只读 chip，以 `agent:<name>` 提交给服务端） */
   agent?: string;
+  /** 预填描述（如自动收集的诊断信息），打开时写入描述框，用户可编辑 */
+  prefillDescription?: string;
+  /** 提交成功后的回调（如清除 panic 记录、关闭相关横幅） */
+  onSubmitted?: () => void;
   onClose: () => void;
 }
 
-export function FeedbackDialog({ open, defaultType, skill, agent, onClose }: Props) {
+export function FeedbackDialog({
+  open,
+  defaultType,
+  skill,
+  agent,
+  prefillDescription,
+  onSubmitted,
+  onClose,
+}: Props) {
   const { t } = useTranslation();
   const [type, setType] = useState(defaultType || "功能建议");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  // 每次打开时重置表单，并应用传入的默认类型
+  // 每次打开时重置表单，并应用传入的默认类型与预填描述
   useEffect(() => {
     if (open) {
       setType(defaultType || "功能建议");
       setTitle("");
-      setDescription("");
+      setDescription(prefillDescription || "");
     }
-  }, [open, defaultType]);
+  }, [open, defaultType, prefillDescription]);
 
   if (!open) return null;
 
@@ -56,6 +68,7 @@ export function FeedbackDialog({ open, defaultType, skill, agent, onClose }: Pro
       const related = agent ? `agent:${agent}` : skill ?? "";
       await api.enterpriseSubmitFeedback(type, related, title.trim(), description.trim());
       toast.success(t("feedback.success"));
+      onSubmitted?.();
       onClose();
     } catch (err) {
       const msg = String(
