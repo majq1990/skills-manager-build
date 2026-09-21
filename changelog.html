@@ -1,0 +1,1234 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Skills Manager - 更新历史</title>
+  <style>
+    :root {
+      --bg: #0c0c0d;
+      --card: #161618;
+      --border: #2a2a2d;
+      --text: #e4e4e7;
+      --muted: #8b8b8b;
+      --accent: #6366f1;
+      --green: #22c55e;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; min-height: 100vh; }
+    header { text-align: center; padding: 60px 20px 40px; }
+    header h1 { font-size: 2rem; font-weight: 700; }
+    header p { color: var(--muted); margin-top: 8px; font-size: 0.95rem; }
+    header .links { margin-top: 16px; display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; }
+    header .links a {
+      color: var(--muted); text-decoration: none; font-size: 0.85rem;
+      border: 1px solid var(--border); border-radius: 8px; padding: 6px 14px;
+      transition: border-color 0.15s, color 0.15s;
+    }
+    header .links a:hover { border-color: var(--accent); color: var(--text); }
+    .container { max-width: 860px; margin: 0 auto; padding: 0 20px 60px; }
+    .entry { background: var(--card); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 12px; }
+    .entry > summary {
+      display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+      padding: 16px 20px; cursor: pointer; list-style: none; user-select: none;
+    }
+    .entry > summary::-webkit-details-marker { display: none; }
+    .entry > summary:hover { border-color: var(--accent); }
+    .entry[open] > summary { border-bottom: 1px solid var(--border); }
+    .ver { font-size: 1.05rem; font-weight: 700; }
+    .date { color: var(--muted); font-size: 0.85rem; }
+    .current { background: #1a3322; color: var(--green); font-size: 0.75rem; padding: 2px 10px; border-radius: 20px; }
+    .entry h4 { font-size: 0.9rem; font-weight: 600; color: var(--accent); margin: 16px 20px 8px; }
+    .entry ul { margin: 0 20px 16px; padding-left: 20px; }
+    .entry li { font-size: 0.9rem; line-height: 1.7; margin-bottom: 6px; color: var(--text); }
+    .entry li::marker { color: var(--muted); }
+    code { background: #252529; border-radius: 4px; padding: 1px 6px; font-size: 0.85em; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    a { color: var(--accent); }
+    .footer { text-align: center; padding: 20px; color: var(--muted); font-size: 0.8rem; border-top: 1px solid var(--border); margin-top: 40px; }
+  </style>
+</head>
+<body>
+<header>
+  <h1>Skills Manager 更新历史</h1>
+  <p>企业 Skill 管理与分发桌面工具 — 版本更新记录（最新版本 v1.25.7，2026-09-16）</p>
+  <div class="links">
+    <a href="./download.html">&larr; 返回下载页</a>
+    <a href="https://github.com/majq1990/skills-manager-build/releases">GitHub Releases</a>
+  </div>
+</header>
+<div class="container">
+      <details class="entry" open>
+        <summary>
+          <span class="ver">v1.25.7</span>
+          <span class="date">2026-09-16</span>
+          <span class="current">当前版本</span>
+        </summary>
+        <h4>发布概览</h4>
+        <ul>
+<li>「报告问题」从「复制诊断信息自行粘贴到 GitHub issue」改为直接走内部反馈渠道，内部用户不再需要 GitHub 账号。</li>
+        </ul>
+        <h4>用户可见更新</h4>
+        <ul>
+<li><strong>「报告问题」直达反馈渠道</strong>：设置页点击「报告问题」后自动收集诊断信息（版本、系统、最近日志摘要），直接打开反馈对话框并预填为描述，提交即进入内部反馈流程；不再弹「诊断信息已复制，请粘贴到 GitHub issue 中」——内部用户访问不了 GitHub，旧路径实际不可用。</li>
+<li><strong>反馈对话框支持预填与提交回调</strong>：描述框打开时写入预填内容且用户可继续编辑；提交成功后自动清理 panic 横幅与 <code>last_panic.log</code> 记录。</li>
+<li>日志摘要只保留最近 60 行（完整日志仍可走「导出日志」生成 zip），避免反馈描述过长。</li>
+        </ul>
+        <h4>开发者与治理更新</h4>
+        <ul>
+<li>反馈对话框新增 <code>prefillDescription</code> / <code>onSubmitted</code> 两个 props；设置页移除对 clipboard-manager 插件的依赖。</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.25.6</span>
+          <span class="date">2026-09-10</span>
+          
+        </summary>
+        <h4>新增</h4>
+        <ul>
+<li><strong>记忆同步目标工具可配置</strong>：统一记忆页「跨 Agent 分发」区每个 Agent 增加勾选「同步记忆」。取消勾选后写入 <code>memory_excluded_tools</code> 设置，该 Agent 目录里的 <code>memory-*</code> 条目与 bridge 会在下次同步时被清理、且不再重新生成——彻底解决「清理 dsh 的 274 个 memory skill 后 60 秒被灌回」的问题（排除列表持久化，桌面端定时同步、CLI 同步、GUI 手动同步三处全部遵守）。</li>
+        </ul>
+        <h4>变更</h4>
+        <ul>
+<li>记忆同步内部接口 <code>sync_all</code> → <code>sync_all_with(store, dry_run)</code>，读取排除设置；无 store 的旧调用保持兼容（不排除任何工具）。</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.25.5</span>
+          <span class="date">2026-09-10</span>
+          
+        </summary>
+        <h4>修复</h4>
+        <ul>
+<li><strong>WebView2 安装失败时给出明确说明</strong>：Windows 安装包维持在线安装（体积不变），但如果系统里存在失效的 WebView2 安装记录（引导器会误判“已为系统安装”而跳过，装完应用一启动就报 Could not find the WebView2 Runtime），安装完成后会立即检测运行时是否真正可用，缺失时弹出说明并提供一键跳转官方下载页手动安装，不再让用户装完面对一个没有解释的启动报错。</li>
+<li>撤回 1.25.4 的内嵌离线运行时方案（安装包体积增至 274MB 的代价不划算，且该版本未对用户发布）。</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.25.4</span>
+          <span class="date">2026-09-10</span>
+          
+        </summary>
+        <h4>修复</h4>
+        <ul>
+<li>测试期内部版本，未对用户发布（内嵌 WebView2 离线运行时的尝试，已被 1.25.5 的在线+检测提示方案取代）。</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.25.3</span>
+          <span class="date">2026-09-10</span>
+          
+        </summary>
+        <h4>修复</h4>
+        <ul>
+<li><strong>企业能力库 Agent 标签页补齐交互</strong>：新增搜索框（按名称/描述/本地中文名过滤）；点击 Agent 卡片弹出详情（拉取企业包内 AGENT.md 渲染为 Markdown，与技能详情一致）；卡片标题优先显示本地已知的中文展示名。</li>
+<li><strong>侧边栏「Agent 库」入口显示为字面量 <code>agents.nav</code></strong>（i18n 键路径写错且键缺失），现正确显示「Agents 库」。</li>
+<li><strong>刷新按钮显示为字面量 <code>common.refresh</code></strong>（三语言均缺失该键），补齐为「刷新 / 重新整理 / Refresh」。</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.25.2</span>
+          <span class="date">2026-09-10</span>
+          
+        </summary>
+        <h4>发布概览</h4>
+        <ul>
+<li>「企业技能」升级为「企业能力库」：同时承载技能与 Agent；Agent 库补齐详情渲染、搜索与 WorkBuddy 专家中文名保留。</li>
+        </ul>
+        <h4>用户可见更新</h4>
+        <ul>
+<li><strong>企业技能 → 企业能力库</strong>：入口、登录提示、加载/错误/删除等全部文案更名（简体/繁体/英文三语言），覆盖技能与 Agent 两个标签页；服务器地址与内部接口不变。</li>
+<li><strong>Agent 详情可读化</strong>：Agent 库详情面板的正文从纯文本改为渲染后的 Markdown（与技能详情一致），AGENT.md 描述的能力一目了然。</li>
+<li><strong>Agent 库支持搜索</strong>：顶栏新增搜索框，按名称或描述实时过滤，与技能页搜索同款交互。</li>
+<li><strong>Agent 显示名（displayName）</strong>：从 WorkBuddy 导入专家时解析 <code>displayName</code>（中文优先、英文兜底）存为展示名，Agent 库卡片与详情优先显示「工程毕升自主交付专家」这类本地化名称；部署回 WorkBuddy 时 <code>displayName</code>/<code>profession</code>/<code>tags</code>/<code>quickPrompts</code> 原样写回 plugin.json，元数据不再丢失。身份名保持稳定，跨工具部署不受影响。</li>
+        </ul>
+        <h4>修复</h4>
+        <ul>
+<li>企业能力库 Agent 标签页的计数提示显示为字面量 <code>{count} 个 Agent</code>（三语言均为单大括号导致 i18next 插值失效），现正确显示实际数量。</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.25.1</span>
+          <span class="date">2026-09-10</span>
+          
+        </summary>
+        <h4>发布概览</h4>
+        <ul>
+<li>修复统一记忆同步的非幂等写入：SKILL.md 生成头不再随每轮同步累积，历史膨胀文件自动自愈。</li>
+        </ul>
+        <h4>修复</h4>
+        <ul>
+<li><strong>记忆同步幂等化（P0）</strong>：同步时检测源文件中残留的生成头（banner 注释与 <code><strong>Memory type</strong></code> 行）和生成式 frontmatter，剥离后再生成——无论生成产物被谁写回源目录，重复同步不会再让文件滚雪球（此前 273 个 memory skill 的 SKILL.md 每轮追加一段头部，单文件膨胀到约 2.7MB，合计约 1.7GB，把 WorkBuddy 的任务执行器内存压爆）。</li>
+<li><strong>历史膨胀自愈</strong>：检测到带生成残留的源文件时，自动用净化后的规范形态原位回写，升级后首轮同步即完成存量清理，无需手工去重。</li>
+<li><strong>部署幂等</strong>：目标 SKILL.md 内容未变化时跳过写入，不再每分钟无谓刷新 mtime 触发下游 agent 重载。</li>
+<li><strong>大小看门狗</strong>：生成的 SKILL.md 超过 100KB 时记录告警日志，防止异常体积静默扩散到所有 agent。</li>
+        </ul>
+        <h4>验收</h4>
+        <ul>
+<li>回归测试覆盖：连续 100 轮同步（含最坏情况&quot;生成物被写回源目录&quot;），目标文件字节数与 banner 计数恒定不变。</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.25.0</span>
+          <span class="date">2026-09-09</span>
+          
+        </summary>
+        <h4>发布概览</h4>
+        <ul>
+<li>Skills Manager 现在支持 agent 定义的统一管理与跨工具分发，并合入一批上游社区可移植改进。</li>
+        </ul>
+        <h4>用户可见更新</h4>
+        <ul>
+<li>新增 <strong>Agent 库</strong>：集中管理自定义 agent 定义，分发到 OpenCode（canonical Markdown）、Codex（TOML variant）、WorkBuddy（ExpertPlugin）、DSH（SKILL.md 包装）。支持一键生成 variant、按工具部署开关、从工具导入、文件上传，以及内置 agent 同名冲突保护。</li>
+<li>Preset 支持混装 agent：应用 preset 时成员 agent 随技能一起部署；侧边栏 preset 行显示 agent 数量徽标。</li>
+<li>Agent 库打通企业服务器：本地 agent 可发布到企业技能服务器（支持可见性与版本号），企业市场可浏览并一键安装 agent 到本机。</li>
+<li>开箱支持 <strong>ZCode</strong>：用户级技能同步到 <code>~/.zcode/skills/</code>。</li>
+<li><strong>Kimi Code 路径修正</strong>：技能现在写入 kimi-code 真正读取的 <code>~/.kimi-code/skills/</code>，不再写入与 Amp、Replit 共用的旧 <code>.config/agents/skills</code>。升级后请对 Kimi 重新同步一次。</li>
+<li>按名安装来源中不存在的技能时，明确报错，不再把整个仓库当作单个技能复制。</li>
+<li>从 tag 钉住的 git 来源安装的技能，不再常驻「检查失败」的更新状态。</li>
+<li>反馈模块打通 Agent 库：反馈可关联具体 agent 提交。</li>
+        </ul>
+        <h4>安全</h4>
+        <ul>
+<li>git 来源安装对请求的 subpath 与最终解析目录做路径逃逸校验（<code>..</code>、绝对路径、软链逃逸一律拒绝），校验通过才会复制。</li>
+        </ul>
+        <h4>开发者与治理更新</h4>
+        <ul>
+<li>Windows 构建嵌入长路径感知应用清单，开启 <code>LongPathsEnabled</code> 后深层嵌套路径的技能安装不再报「path too long」。</li>
+<li>首次启动语言跟随系统（zh / zh-TW / en，主子标签精确匹配、显式脚本优先）；已有显式设置不受影响。</li>
+<li>修复企业登录在 blocking 调用 panic 后连锁失败的问题，全部企业命令移出 async 线程执行。</li>
+<li>Windows 更新清单规范化为 NSIS 安装包，1.24.1 老客户端静默升级路径保持可用；补齐更新后自动重启所需的 process 能力声明。</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.24.2</span>
+          <span class="date">2026-08-10</span>
+          
+        </summary>
+        <h4>发布概览</h4>
+        <ul>
+<li>修复 Windows 企业端自动更新无法完成的问题。</li>
+        </ul>
+        <h4>用户可见更新</h4>
+        <ul>
+<li>Windows 更新完成后自动重启客户端并应用新版本。</li>
+<li>Windows 更新明确使用 NSIS 安装包，避免 MSI 更新链路无法静默完成。</li>
+<li>修正旧版本从 1.24.1 升级时的通用 Windows 更新入口，确保首次升级也使用 NSIS 安装包。</li>
+<li>修复应用安装后 WorkBuddy 技能目录定位错误导致技能不可用的问题。</li>
+<li>修复 Windows 企业市场下载在 HTTP/2 连接被重置时失败的问题，企业 API 客户端改用 HTTP/1.1。</li>
+        </ul>
+        <h4>开发者与治理更新</h4>
+        <ul>
+<li>接入 Tauri Process 插件，补齐更新安装后的重启流程。</li>
+<li>发布清单保留 MSI 手动安装入口，同时将通用 Windows 更新入口规范化为 NSIS。</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.24.1</span>
+          <span class="date">2026-07-31</span>
+          
+        </summary>
+        <h4>新增</h4>
+        <ul>
+<li>本地 ZIP 导入与企业下载支持 multi-skill package，一个包可自动发现并独立安装多个子技能。</li>
+<li>每个子技能记录包内相对路径 <code>source_subpath</code>，同时保留企业包名作为统一更新来源。</li>
+        </ul>
+        <h4>修复</h4>
+        <ul>
+<li>企业自动更新按共享包来源解析子技能，同一个 multi-skill package 每轮只下载和处理一次。</li>
+<li>企业技能包上传、下载超时提高到 5 分钟，支持体积较大的多技能归档。</li>
+<li>企业下载失败时展示连接、TLS 或超时等底层原因。</li>
+<li>有效父技能内部出现嵌套 <code>SKILL.md</code> 时保持整体安装，不错误拆分为多个技能。</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.24.0</span>
+          <span class="date">2026-07-22</span>
+          
+        </summary>
+        <h4>新增</h4>
+        <ul>
+<li>跨 Agent 个人统一记忆仓，支持 Claude Code、Codex、OpenCode、WorkBuddy、Cursor 等已安装 Agent 共享调用记忆。</li>
+<li>自动发现各 Agent 原生 memory 目录，支持 SHA-256 去重、按最新修改时间解决冲突、覆盖前备份和审计日志。</li>
+<li>新增统一记忆写入桥、启动同步、每 60 秒后台对账、GUI 管理页面及完整 CLI 命令。</li>
+        </ul>
+        <h4>修复</h4>
+        <ul>
+<li>移除无法真正接入 OpenCode 生命周期的伪插件，改为所有 Agent 通用的记忆桥协议。</li>
+<li>修复 Windows 下错误的记忆符号链接目录结构，并在无符号链接权限时安全降级为复制。</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.23.2</span>
+          <span class="date">2026-07-09</span>
+          
+        </summary>
+        <h4>修复</h4>
+        <ul>
+<li>反馈监控「关联技能」记录不准：此前把工具名（Read/Bash 等）当成技能名上报，现改为正确归属到真实企业技能。</li>
+<li>修复反馈插件因缺失文件导致的 Claude Code / WorkBuddy 采集失效（hook 静默崩溃、零上报）。</li>
+<li>opencode 技能识别：opencode 以上下文注入方式加载技能（不走技能工具），改为从注入内容识别当前技能，报错才能正确归属。</li>
+        </ul>
+        <h4>新增</h4>
+        <ul>
+<li>反馈内容大幅增强：上报除描述外，新增「会话摘要」「卡点时间线（工具调用序列 + 报错）」「错误详情」，便于定位技能异常卡点。</li>
+<li>反馈表新增分析列（会话摘要 / 卡点时间线 / 错误详情 / 详情ID）与全文取回接口，支撑后续问题分析。</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.23.1</span>
+          <span class="date">2026-07-07</span>
+          
+        </summary>
+        <h4>修复</h4>
+        <ul>
+<li>设置页版本号改为动态读取真实应用版本（此前写死为旧版本号）。</li>
+<li>更新失败时的「下载页」跳转改指向 download.html（原目录地址会 403）。</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.23.0</span>
+          <span class="date">2026-07-07</span>
+          
+        </summary>
+        <h4>发布概览</h4>
+        <ul>
+<li>新增反馈监控与企业技能自动更新。</li>
+        </ul>
+        <h4>用户可见更新</h4>
+        <ul>
+<li>反馈监控：opencode / Claude Code / 腾讯 WorkBuddy 三个 agent 默认部署反馈插件，登录或安装企业技能时自动部署；支持连续卡住检测、报错上报、主动反馈三通道，上报前本地脱敏。</li>
+<li>企业技能登录后自动更新到服务端最新版本。</li>
+        </ul>
+        <h4>开发者与治理更新</h4>
+        <ul>
+<li>修正反馈接口路径（去掉多余的 <code>/api/v1</code>，修复手动反馈 404）。</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.22.7</span>
+          <span class="date">2026-06-12</span>
+          
+        </summary>
+
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.22.6</span>
+          <span class="date">2026-06-11</span>
+          
+        </summary>
+
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.22.4</span>
+          <span class="date">2026-05-30</span>
+          
+        </summary>
+        <h4>发布概览</h4>
+        <ul>
+<li>一个修复版本：把全局工作区的技能上传到技能仓库后，卡片上消失的删除/管理按钮重新出现；同时让「有可用更新」徽标和 Diff 标签页实际展示的内容保持一致。</li>
+        </ul>
+        <h4>用户可见更新</h4>
+        <ul>
+<li><strong>上传后的技能重新有了删除按钮</strong> —— 把技能从全局工作区上传到技能仓库后，卡片以前会变得没有任何操作按钮：技能虽已同步却处于「未托管」状态，既没有删除键也没有重新上传键。现在新上传的技能会被注册为受管目标；同时新增一次性的启动修复，把此前因旧逻辑而卡死的技能的按钮也补回来。</li>
+<li><strong>更新徽标与 Diff 现在一致了</strong> —— 「有可用更新」徽标是对整个技能目录做哈希，而 Diff 标签页以前只比较主文件 <code>SKILL.md</code>，因此 <code>references/</code>、<code>scripts/</code> 里的改动、文件增删、或可执行位变化都会点亮更新提示却显示空 diff。现在 Diff 标签页会按文件展示整个技能目录的改动，徽标和 diff 始终对得上。</li>
+        </ul>
+        <h4>开发者与治理更新</h4>
+        <ul>
+<li>把本地 agent 技能上传到中心时，改为复用常规的 <code>sync_single_skill_to_tool</code> 路径，使被采纳的技能成为与其他受管技能一致的受管目标；若目标注册失败，则回滚刚插入的技能记录。</li>
+<li>新增启动修复 <code>backfill_stranded_agent_targets</code>：扫描每个已安装且启用的 agent，找出 <code>source_ref</code> 指向 agent 技能目录、却没有对应 target 的中心技能。它严格按 <code>source_ref</code> 匹配（绝不按内容哈希，以免误认领相似技能），且只修复工作区判定为 <code>in_sync</code> 的技能（因为同步会用中央副本重写 agent 侧产物）。该过程幂等，并在所有技能都已有 target 后通过廉价预检直接短路。</li>
+<li>抽出统一的文件枚举辅助函数（<code>content_hash::list_content_files</code>）供哈希和 diff 共用，确保两者范围永不漂移；新增 <code>get_skill_source_diff</code> 命令，返回按文件分项的差异（新增 / 删除 / 修改；文本 / 二进制 / 过大 / 仅权限变化）；Diff 标签页按每个改动文件渲染 <code>SkillSourceDiffViewer</code>，并在打开时懒加载。</li>
+<li>在 README 中记录 macOS 15 Gatekeeper「无法验证此 App 不含恶意软件」对话框，附截图与照常打开 App 的步骤。</li>
+<li>CI：跳过 rust-cache 的保存步骤，避免 Windows 发布构建出现误报失败。</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.22.3</span>
+          <span class="date">2026-05-30</span>
+          
+        </summary>
+        <h4>发布概览</h4>
+        <ul>
+<li>一个小修复版本：当某个项目关联了很多 agent 时，技能详情页里该项目的 agent 按钮也能正常显示。</li>
+        </ul>
+        <h4>用户可见更新</h4>
+        <ul>
+<li><strong>agent 按钮不再溢出卡片</strong> —— 在技能详情页中，关联了很多 agent 的项目以前会把各 agent 的「添加/已安装」按钮挤出卡片边缘，导致被裁切看不全。现在这些按钮独占项目名下方的一行并自动换行，项目名和每个 agent 按钮都能完整显示（#188、#189）。</li>
+        </ul>
+        <h4>开发者与治理更新</h4>
+        <ul>
+<li>将 <code>SkillProjectsSection</code> 中的项目行从单行横向 flex 改为两行堆叠布局（项目名 + 可换行的按钮行），去掉了导致 <code>flex-wrap</code> 失效的 <code>shrink-0</code>，把按钮左对齐到项目名下方，并清理了按钮 map 块残留的缩进。</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.22.2</span>
+          <span class="date">2026-05-28</span>
+          
+        </summary>
+        <h4>发布概览</h4>
+        <ul>
+<li>一次维护性发布：修复启动崩溃，并让技能重新在 Codex CLI 中可见。</li>
+        </ul>
+        <h4>用户可见更新</h4>
+        <ul>
+<li><strong>Codex 技能重新可见</strong> —— 技能现在部署到 <code>~/.codex/skills/</code>，也就是 Codex CLI 实际读取用户级技能的位置。此前版本写到了 <code>~/.agents/skills/</code>，导致已安装的技能在 Codex 中根本不显示；旧路径保留为发现回退，已有安装仍会出现在 Codex 标签页（#182）。</li>
+<li><strong>不再因失效预设而启动崩溃</strong> —— 修复了一个外键 panic：当某个预设仍引用已被删除的技能时，应用可能在启动时崩溃。现在重建索引时会跳过（并记录）这些失效成员关系，而不是中断启动（#170）。</li>
+        </ul>
+        <h4>开发者与治理更新</h4>
+        <ul>
+<li>同步日志更安静也更有用：去掉了多余的 <code>package-lock</code> peer 标记噪声，并在跳过失效预设成员关系时给出告警，同时新增覆盖「成员关系指向不存在的技能或预设」的回归测试。</li>
+<li>重构了两个 CHANGELOG 文件和 release notes 模板，统一为三段面向受众的结构（发布概览 / 用户可见更新 / 开发者与治理更新），取代旧的 Added/Changed/Fixed/Removed 划分。</li>
+<li>release notes 现在会自动注入元信息 —— 发布日期、上一个 tag→当前 tag 的对比链接、以及校验状态区块 —— 并通过 awk 过滤掉空段，避免半填写的条目泄漏占位标题。</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.22.1</span>
+          <span class="date">2026-05-22</span>
+          
+        </summary>
+        <h4>发布概览</h4>
+        <ul>
+<li>这版主要清理了让用户困惑的两个状态指示元素，让技能库卡片和设置页 Agent 开关一眼可读。</li>
+        </ul>
+        <h4>用户可见更新</h4>
+        <ul>
+<li><strong>技能库卡片状态指示</strong> —— 移除每张 Skill 卡片左上角的小圆圈。该圆圈表达的「至少已同步到某个 Agent」与左侧绿色竖边表达的「属于当前 Preset」混在一起，容易让用户误解；每个 Agent 的同步状态仍可在卡片右下角的 Agent 图标处看到。</li>
+<li><strong>设置页 Agent 开关更显眼</strong> —— 每个 Agent 旁的小图标已替换为 macOS 风格的开关（绿色 = 已启用，灰色 = 已禁用）。此前的图标看起来像一个状态标识，导致用户不知道可以点击它来启用或禁用 Agent。</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.22.0</span>
+          <span class="date">2026-05-21</span>
+          
+        </summary>
+        <h4>用户可见更新</h4>
+        <ul>
+<li><strong>Skill 自动更新</strong> —— 新增 <strong>设置 → Skill 自动更新</strong> 面板。可设置后台检查频率（每小时 / 每 6 小时 / 每天），让应用长时间开启时「可更新」徽标保持最新；并可开启 <strong>自动应用更新</strong>，检测到上游更新后自动拉取并更新，无需手动点击 —— 默认关闭，关闭时仅在技能库标记可更新。同时移除了设置页中冗余的「立即检查」按钮（技能库工具栏已有「检查全部」）。</li>
+<li><strong>龙虾 Agent</strong> 在侧边栏中独立成组，与编程类 Agent 分开显示。</li>
+<li>更新检查进行时，从托盘菜单应用 Preset 不再被阻塞。</li>
+<li><strong>Preset 作为策展标签</strong> —— 在 Preset 中添加或移除 Skill，不再立即改变实际部署到各 Agent 的内容；部署只在你显式「应用 Preset」时发生。</li>
+        </ul>
+        <h4>开发者与治理更新</h4>
+        <ul>
+<li>重构 Preset 模型为「策展标签」语义：成员编辑与磁盘同步解耦，新增批量应用模式与工作区范围的托盘应用路径。</li>
+<li>后台自动更新调度器改为每 15 分钟轮询，以便及时触发最短的「每小时」检查并快速响应设置变更。</li>
+<li>托盘的 Preset 应用与更新检查改用各自独立的锁，两个操作不再互相阻塞。</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.21.0</span>
+          <span class="date">2026-05-18</span>
+          
+        </summary>
+        <h4>新增</h4>
+        <ul>
+<li><strong>「添加 Skills」弹层</strong> —— 任意工作区点击 <strong>+ 添加 Skills</strong> 即可打开统一的挑选弹层：搜索中央库，用始终可见的 Agent 标签切换目标（带一键全选 / 清空），一次提交批量添加多个 Skills。</li>
+<li><strong>「未标签」过滤项</strong> —— Library 标签筛选条新增 <strong>未标签</strong> 选项，可快速定位漏打标签的 Skills。</li>
+<li><strong>从卡片直接删除</strong> —— 在 <strong>全局工作区</strong> 中，仅存在于某个 Agent 目录、未关联中央库的 Skills 可直接在卡片上删除；<strong>项目工作区</strong> 中卡片上的删除按钮改为始终可见，不再仅悬停显示。</li>
+<li><strong>活动日志与「导出日志」打包</strong> —— 应用现在会本地记录安装 / 移除 / 更新 / 同步操作，<strong>设置 → 导出日志</strong> 会将这些活动连同最近日志文件一起打包为单个 zip，方便提交 Issue 时附上。</li>
+<li><strong>启动时序诊断日志</strong>，用于排查 Windows 启动慢的问题（#153）。</li>
+        </ul>
+        <h4>变更</h4>
+        <ul>
+<li><strong>Dashboard 改为面向整个技能库</strong> —— Hero 区移除「当前 Preset」框架，改为显示技能库总数、同步覆盖率和实际已启用的 Agent 数量；近期动态也改为基于全部受管 Skills。</li>
+<li><strong>Copy 模式同步更快</strong> —— 当源文件哈希未变时跳过逐文件重写，大型技能库（尤其是 Windows 路径）重新同步明显更快（#153）。</li>
+        </ul>
+        <h4>修复</h4>
+        <ul>
+<li><strong>全局工作区切换 Agent 偶发卡在加载状态</strong> —— 清理时正确重置「已加载 Agent」引用，切换时始终重新拉取。</li>
+<li><strong>项目工作区调整目标 Agent 后 Skill 开关有时表现异常</strong>，现已修复。</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.20.0</span>
+          <span class="date">2026-05-18</span>
+          
+        </summary>
+        <h4>新增</h4>
+        <ul>
+<li><strong><code>skills-manager-cli</code> 写命令</strong> —— CLI 现在可以让 Agent 完整管理 skills：<code>install</code>（本地路径 / git URL / <code>owner/repo[@skill]</code> 简写）、<code>update</code>、<code>check</code>、<code>remove</code>、<code>sync</code>、<code>search</code>（skills.sh 市场，无需 API Key）、<code>adopt</code>（把 Agent 目录里已存在的 skill 收编进中央库）、<code>tag add/remove/list</code>。所有命令支持 <code>--json</code>；<code>remove</code> / <code>sync</code> / <code>adopt</code> 支持 <code>--dry-run</code>；<code>remove</code> 必须显式带 <code>--yes</code>。</li>
+<li><strong><code>presets add-skill</code> / <code>remove-skill</code> CLI 命令</strong> —— 在命令行管理 preset 包含哪些 skill。</li>
+<li><strong><code>presets deactivate</code> CLI 命令</strong>（别名 <code>close</code> / <code>stop</code> / <code>off</code> / <code>disable</code>）—— 关闭一个 preset 并撤销其同步目标。如果关闭的是当前激活 preset，会自动应用替代 preset；如果不是，会重新同步当前激活 preset，确保两边共用的 skill 仍然在 Agent 目录里。</li>
+<li><strong><code>manage-skills</code> skill</strong>（<code>assets/manage-skills/SKILL.md</code>）—— 放入 <code>~/.claude/skills/</code> 后，Claude Code（及其它 Agent）会优先用 <code>skills-manager-cli</code>，而不是直接往某一个 Agent 目录里装 skill。</li>
+<li><strong>应用内 Cmd/Ctrl+R</strong> —— 一键刷新 skills / presets / Agent 状态，不需要重启（在输入框内输入时不会触发）。</li>
+        </ul>
+        <h4>变更</h4>
+        <ul>
+<li><strong>用户可见的 scenario 术语统一改为 preset</strong> —— Tauri 命令（如 <code>apply_preset_to_default</code>）、CLI 子命令（<code>skills-manager-cli presets ...</code>）、CLI JSON 字段（<code>preset_id</code> / <code>preset_name</code>）、前端类型和 i18n key 现在都使用 <code>preset</code>。CLI 会保留 <code>scenarios</code>、<code>--scenario</code>、<code>--sync-scenario</code> 作为隐藏兼容别名一个版本。内部 Rust 类型、SQLite schema 和 Git Backup metadata 仍保留 <code>scenario</code> 以保证兼容。</li>
+<li><strong>启用 / 禁用 skill 现在通过 preset 成员管理</strong> —— 使用 <code>presets add-skill</code> / <code>presets remove-skill</code> 来决定哪些 skill 会被同步到 Agent。本版本起，旧的 <code>enabled</code> 标志不再参与同步判定。</li>
+<li><strong>侧栏选中的 preset 不再被外部切换强制带走</strong> —— 当 CLI 或托盘菜单切换激活 preset 时，仅当你正在浏览的就是上一个激活 preset，侧栏才会跟着走；如果你正在看另一个 preset，那个选择会保留下来。</li>
+        </ul>
+        <h4>弃用</h4>
+        <ul>
+<li><strong><code>skills enable</code> / <code>skills disable</code> CLI</strong> —— 两个命令现在都是 no-op，只打印弃用提示。请改用 <code>presets add-skill</code> / <code>presets remove-skill</code>。</li>
+        </ul>
+        <h4>修复</h4>
+        <ul>
+<li><strong><code>presets close &lt;非当前 preset&gt;</code> 不再破坏当前激活 preset 的同步</strong> —— 此前关闭一个非激活 preset 会把它和激活 preset 共用的 skill 的同步目标一起删掉；现在会在删完之后重新同步激活 preset，把共用部分恢复回来。</li>
+<li><strong><code>skills disable</code> 不会再偷偷把 skill 重新启用</strong> —— 弃用前的 <code>disable</code> 实现会把旧的 <code>enabled</code> 标志翻回 <code>true</code>，与用户意图正好相反。现在它不再修改这个字段。</li>
+        </ul>
+        <h4>移除</h4>
+        <ul>
+<li><strong>SkillsMP AI 搜索</strong> —— 移除第三方 <code>skillsmp.com</code> 集成（设置里的 API Key、安装页面的 &quot;AI Search&quot; 开关、<code>search_skillsmp</code> Tauri 命令）。免费的 skills.sh 市场和关键词搜索仍然保留。SkillsMP 没有被任何主流 Agent 生态采用，引入了付费第三方依赖且没有独特价值。</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.19.3</span>
+          <span class="date">2026-05-17</span>
+          
+        </summary>
+        <h4>新增</h4>
+        <ul>
+<li><strong>「报告问题」按钮（设置 → 关于）</strong> —— 一键复制应用版本、系统、已启用 Agent、界面语言和最近日志摘要到剪贴板，并打开预填好的 GitHub issue 模板，粘贴即可提交。</li>
+<li><strong>「导出日志」按钮（设置 → 关于）</strong> —— 把最近日志（路径、Token、邮箱等已脱敏）打包成 zip 保存到下载文件夹，并在文件管理器中高亮，方便拖到 issue 附件区。</li>
+<li><strong>崩溃后下次启动顶部红色提示</strong> —— 上一次运行如果异常退出，设置 → 关于 顶部会出现红色横幅和一键报告按钮，避免崩溃被忽略。</li>
+<li><strong>GitHub issue 模板</strong> —— bug 反馈与功能请求新增轻量中英双语模板，引导你使用上述按钮。</li>
+        </ul>
+        <h4>变更</h4>
+        <ul>
+<li><strong>正式版本现在会写本地日志</strong>（Info 级别，5MB × 3 自动轮转）。导出或复制前会对家目录路径、Git 凭证、Token、邮箱等敏感信息脱敏；重复噪音行会折叠，关键事件更显眼。</li>
+        </ul>
+        <h4>修复</h4>
+        <ul>
+<li><strong>修复 git fetch 自激循环导致 CPU 持续 100%+ 甚至窗口卡死的问题</strong> —— 一个「刷新→fetch→文件监听→再刷新」的循环已被切断；在部分 macOS 用户上还表现为 Skill 预览黑屏、只能 <code>⌘Q</code> 强退（#144、#69、#151、#150）。</li>
+<li><strong>Windows / Linux 上托盘图标不再不可见</strong> —— 原本的纯白托盘图标在 Windows 浅色任务栏上完全看不到；非 macOS 平台现在使用彩色变体，macOS 仍用模板风格白色图标（#154、#149）。</li>
+        </ul>
+        <h4>修复</h4>
+        <ul>
+<li><strong>Codex 技能改用官方路径 <code>~/.agents/skills</code></strong> —— Codex 按官方文档只从 <code>~/.agents/skills</code> 读取用户级技能，但 skills-manager 之前部署到 <code>~/.codex/skills</code>（codex 根本不读）且不扫 <code>~/.agents/skills</code>。现在部署和发现都改对，老的 <code>~/.codex/skills</code> 位置仍能扫到（兼容已存在的同步内容）（#143、#147）。</li>
+<li><strong>GitHub Copilot 也扫描 <code>~/.agents/skills</code></strong> —— 在原有的 <code>~/.copilot/skills</code> 之外（#147）。</li>
+<li><strong>本地安装失败显示真实错误信息</strong> —— toast 不再出现 <code>[object Object]</code>，会显示实际错误内容（#101）。</li>
+<li><strong>改了 SKILL.md 后中央列表的描述会自动刷新</strong> —— 外部编辑 <code>SKILL.md</code> 不再需要重新导入才能看到新 description（#92）。</li>
+<li><strong>安装/导入成功后不再误弹「失败」toast</strong> —— 之前 install 之后的刷新（后台扫描、状态刷新）出错会被当成 install 失败；现在 install 与 refresh 分两阶段，refresh 失败仅记录日志，不污染 UI（#92）。</li>
+<li><strong>重启前连续改两次中央仓库目录不再丢数据</strong> —— 跨多次未重启的路径切换都能正确追溯原始数据位置（#92）。</li>
+<li><strong>多变体技能安装会优先选通用版本</strong> —— 当仓库提供多个 agent-specific 变体（<code>.cursor/skills/&lt;id&gt;</code>、<code>.claude/skills/&lt;id&gt;</code> 等）时，安装器现在稳定选择 <code>.agents/skills/&lt;id&gt;</code>，不会再随机命中（#103）。</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.19.1</span>
+          <span class="date">2026-05-15</span>
+          
+        </summary>
+        <h4>修复</h4>
+        <ul>
+<li><strong>macOS 首次打开提示「应用已损坏」</strong> — CI 构建的 release 包现在会做 ad-hoc 签名，下载 <code>.dmg</code> 后不再触发 Gatekeeper 的「已损坏」警告，无需手动执行 <code>xattr -cr</code>（#138）。</li>
+<li><strong>老版本 macOS 打开技能详情时黑屏</strong> — 技能详情侧边面板改用显式 stacking，修复 Monterey / 旧版 WKWebView 上面板渲染为黑色遮罩的回归问题（#69, #144）。</li>
+<li><strong>从嵌套分类目录导入 git 技能</strong> — git 技能导入现在会递归扫描嵌套分类目录，而不是只看顶层文件夹，便于按子分类组织的技能仓库正确导入（#121）。</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.19.0</span>
+          <span class="date">2026-05-13</span>
+          
+        </summary>
+        <h4>新增</h4>
+        <ul>
+<li><strong>Global Workspace 显示 Agent 本地 Skills</strong>：每个 Agent 的页面现在会列出其全局目录里的所有 Skills，包括不是通过 Skills Manager 安装的。可按 Agent 把仅存在于本地的 Skill 上传到中央库、把库里的更新拉取到本地副本，或移除已纳管的 Skill；列表支持搜索和标签筛选。</li>
+        </ul>
+        <h4>变更</h4>
+        <ul>
+<li><strong>在卡片上直接安装 Skill</strong>：每张 Skill 卡片现在会为每个已启用 Agent 显示一个图标角标（取代原来的两字母标签）。点击角标即可直接在卡片上为该 Agent 安装或移除这个 Skill，操作时角标会实时反映同步状态并显示加载动画。</li>
+<li><strong>可自定义 Agent 顺序</strong>：设置页支持在每个分组（主流 / 更多 / 自定义）内拖拽调整 Agent 顺序，这个顺序会应用到所有出现 Agent 的地方 —— 卡片角标、工作区列表、开关等。</li>
+<li><strong>统一 Skill 卡片点击行为</strong>：在技能库、Global Workspace 和项目工作区中，点击卡片任意位置都会打开详情面板；卡片上的操作按钮不再同时触发卡片点击。</li>
+<li><strong>帮助弹窗</strong>：新增「全局工作区」一项，并更新了「技能库」和「设置」两项的说明，覆盖新的 Agent 图标角标和 Agent 排序。</li>
+        </ul>
+        <h4>修复</h4>
+        <ul>
+<li><strong>OpenCode 项目 Skills 路径</strong>：OpenCode 的项目级 Skills 现在会安装到 <code>&lt;project&gt;/.opencode/skills/</code>（OpenCode 实际读取的位置），而不是之前的 <code>&lt;project&gt;/.config/opencode/skills/</code>。</li>
+<li><strong>打开 Global Workspace 的 Agent 页面不再重复刷新多次</strong>：Agent 本地 Skills 列表每个 Agent 只加载一次，且上一个 Agent 残留的慢请求不会再覆盖当前页面的数据。</li>
+<li><strong>CLI 加固</strong>：设置 <code>--json</code> 时 <code>skills-manager-cli</code> 现在会返回 JSON 错误信封（包括参数解析错误），拒绝克隆到非空且非 git 的目录，设置 5 秒的 SQLite busy timeout 以避免与桌面应用同时使用时立即失败，并在 Windows 上正确处理 <code>PATH</code>。</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.18.0</span>
+          <span class="date">2026-05-09</span>
+          
+        </summary>
+        <h4>变更</h4>
+        <ul>
+<li><strong>场景更名为 Preset</strong>：应用内的“场景 / Scenario”已统一更名为 Preset，覆盖界面标签、侧边栏、设置、帮助和多语言文案。已有场景会以 Preset 形式继续使用，不需要迁移数据。</li>
+<li><strong>Preset bar 取代“应用 Preset”弹窗</strong>：Preset 现在以内联标签形式显示在 Global Workspace 和 Project Workspace 的搜索/标签筛选下方。点击标签即可为当前 Agent 范围启用或移除该 Preset 的全部 Skills；已启用会显示 ✓，部分安装会显示已安装/总数。</li>
+<li><strong>Global Workspace 重设计</strong>：每个 Agent 都有独立页面，可从侧边栏进入；固定的 <strong>全部 Agents</strong> 入口可一次管理所有已安装 Agent。每个 Agent 页面都支持标签筛选、多选和批量移除。</li>
+<li><strong>侧边栏改进</strong>：Preset 和项目工作区分组支持折叠；Global Workspace 中的 Agent 支持拖拽排序。</li>
+<li><strong>新增 Agent 图标</strong>：内置 Agent 现在会在设置、Global Workspace、项目弹窗和 Agent 开关中显示对应图标，多 Agent 列表更容易识别。</li>
+<li><strong>更多 Preset 图标</strong>：Preset 图标选择器新增 Agents、CLI、数据、分析、研究、安全、自动化、基础设施、实验等更多选项。</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.17.0</span>
+          <span class="date">2026-05-07</span>
+          
+        </summary>
+        <h4>新增</h4>
+        <ul>
+<li>新增面向 agent 的命令行工具 <code>skills-manager-cli</code>，无需打开桌面应用即可操作 skills 仓库 —— 列出/查看/导出技能、预览/应用 scenario、执行 git 备份命令。支持 <code>--json</code> 输出和 <code>--skills-root</code> 直接指向任意已克隆的 skills 目录。可通过 <code>npm run cli:install</code> 安装到 PATH。</li>
+        </ul>
+        <h4>修复</h4>
+        <ul>
+<li>Git 备份：Windows 下克隆远端 skills 仓库不再因仓库锁阻塞而失败 —— 锁文件已移到 skills 目录之外，克隆目标可以保持空目录。</li>
+<li>CLI：<code>--skills-root</code> 不再把 <code>skills-manager.db</code> 等管理状态写到 skills 目录的父级，每个外部目录的状态现在统一放在 <code>~/.skills-manager/external/</code> 下，按 skills 根目录的规范化路径分目录隔离。</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.16.1</span>
+          <span class="date">2026-05-01</span>
+          
+        </summary>
+        <h4>变更</h4>
+        <ul>
+<li>项目页将「添加 Skill 到项目」作为主操作，按钮置于项目标题旁、高亮显示；首次访问已有项目时还会出现一次性提示，告诉你怎样按标签批量添加。</li>
+<li>在「添加 Skill」弹窗里明确说明 tag 用途（&quot;按标签筛选可批量添加同类 Skill&quot;），让批量推送流程更容易被发现。</li>
+<li>空项目页面新增显眼的「从中央仓库添加 Skill」入口，第一次打开就知道下一步怎么操作。</li>
+<li>Help 帮助页新增「推荐工作流」条目，涵盖单 Agent、多项目和多设备三种典型用法。</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.16.0</span>
+          <span class="date">2026-05-01</span>
+          
+        </summary>
+        <h4>变更</h4>
+        <ul>
+<li>在侧边栏点击场景现在只会打开浏览/编辑视图，不再立即把 Skills 同步到 Agent。需要同步时，请点击「我的 Skills」顶部新增的 <strong>应用到默认</strong> 按钮。升级后首次打开场景会出现一次性提示说明新流程。</li>
+        </ul>
+        <h4>新增</h4>
+        <ul>
+<li>在场景标题旁显示 <strong>已应用</strong> / <strong>尚未应用</strong> 状态，让你清楚区分&quot;正在编辑的场景&quot;与&quot;磁盘上当前生效的场景&quot;。</li>
+<li>当没有可用 Agent 时给出警告，避免在无目标的情况下误触发应用。</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.15.2</span>
+          <span class="date">2026-04-29</span>
+          
+        </summary>
+        <h4>变更</h4>
+        <ul>
+<li>单个 Skill 删除从居中弹窗改为垃圾桶按钮旁的内联气泡确认。确认后卡片就地转圈、后端异步执行，删除一个不再阻塞下一次操作，适合&quot;边看边清理&quot;的工作流。</li>
+        </ul>
+        <h4>修复</h4>
+        <ul>
+<li>优化场景切换性能，Skills 数量较多时切换更快。</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.15.1</span>
+          <span class="date">2026-04-28</span>
+          
+        </summary>
+        <h4>新增</h4>
+        <ul>
+<li>从 Git 仓库安装 Skills 时显示实时克隆进度。</li>
+<li>缓存已克隆的 Git 仓库，加快重复安装并减少网络等待。</li>
+        </ul>
+        <h4>变更</h4>
+        <ul>
+<li>重新设计 Git 备份体验，提供更清晰的健康状态和恢复操作。</li>
+<li>优化 Git 工具栏布局，减少筛选控件附近的拥挤感。</li>
+<li>默认使用软链接同步，提升场景切换速度，并保持单一数据源。</li>
+        </ul>
+        <h4>修复</h4>
+        <ul>
+<li>改进 Git 同步的稳定性和恢复能力。</li>
+<li>避免初始化 Git 备份时因无变更提交而失败。</li>
+<li>加强同步元数据生命周期处理和 Windows 目录清理。</li>
+<li>改进缓存 Git checkout 的隔离和物化可靠性。</li>
+<li>优化批量删除 Skills 的性能，选中的 Skills 会在一次操作中完成处理。</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.15.0</span>
+          <span class="date">2026-04-25</span>
+          
+        </summary>
+        <h4>新增</h4>
+        <ul>
+<li>支持编辑自定义 Agent 的项目 Skills 路径</li>
+<li>多设备同步元数据支持</li>
+<li>全新青绿色 S 设计风格应用图标</li>
+        </ul>
+        <h4>变更</h4>
+        <ul>
+<li>更新侧边栏图标为新版 S 设计（透明背景）</li>
+        </ul>
+        <h4>修复</h4>
+        <ul>
+<li>修复 Dock 图标在 macOS 上未正确显示圆角的问题</li>
+<li>修复轮询扫描发现新目录时未触发刷新事件的问题</li>
+<li>修复空目录仍被监听导致无法删除 Agent 文件夹的问题</li>
+<li>修复重新启用最后一个 Skill 后残留空目录未清理的问题</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.14.3</span>
+          <span class="date">2026-04-21</span>
+          
+        </summary>
+
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.14.2</span>
+          <span class="date">2026-04-21</span>
+          
+        </summary>
+
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.14.1</span>
+          <span class="date">2026-04-18</span>
+          
+        </summary>
+        <h4>新增</h4>
+        <ul>
+<li>命令面板，支持快速导航和操作</li>
+<li>每个 Agent 的同步状态指示器，可查看哪些 Agent 需要同步</li>
+<li>Skills 批量标签编辑，更快地组织技能</li>
+<li>项目详情面板中的 Agent 开关，快速分配 Agent</li>
+<li>技能详情面板支持 local/diff/center 标签页，对比不同版本的技能</li>
+<li>技能详情面板显示 Agent 圆点和标签</li>
+        </ul>
+        <h4>变更</h4>
+        <ul>
+<li>改进项目工作区技能管理，组织更清晰</li>
+<li>技能详情面板支持完整滚动，关闭按钮始终可见</li>
+        </ul>
+        <h4>修复</h4>
+        <ul>
+<li>移除项目技能卡片上的 Agent 分配数量标签，界面更简洁</li>
+        </ul>
+        <h4>移除</h4>
+        <ul>
+<li>本次无移除内容</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.14.0</span>
+          <span class="date">2026-04-18</span>
+          
+        </summary>
+        <h4>新增</h4>
+        <ul>
+<li>支持批量更新 Skills，可一次更新多个已安装技能</li>
+<li>支持自定义 central repository 路径，便于将受管技能库放在默认位置之外</li>
+        </ul>
+        <h4>变更</h4>
+        <ul>
+<li>优化设置页表单控件样式，配置体验更整洁一致</li>
+        </ul>
+        <h4>修复</h4>
+        <ul>
+<li>去重启动时的 skill 更新通知，避免同一更新重复提醒</li>
+<li>更新 Antigravity 默认路径，确保安装和同步使用正确的 skills 目录</li>
+<li>收紧 Claude Code 的 skill 扫描与导入匹配逻辑，避免插件市场缓存和同名技能导致误判</li>
+        </ul>
+        <h4>移除</h4>
+        <ul>
+<li>本版本无移除项</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.13.3</span>
+          <span class="date">2026-04-11</span>
+          
+        </summary>
+        <h4>变更</h4>
+        <ul>
+<li>关联外部工作区时不再需要手动填写&quot;停用 Skills 目录&quot;。Skills Manager 现在会自动创建并使用同级的 <code>*-disabled</code> 目录；若该目录无法创建（例如只读位置），将优雅降级为只读模式。</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.13.2</span>
+          <span class="date">2026-04-11</span>
+          
+        </summary>
+        <h4>修复</h4>
+        <ul>
+<li>在 Linux 上退出 Skills Manager 不会再误杀其他正在运行的应用或整个桌面会话（#47）</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.13.1</span>
+          <span class="date">2026-04-10</span>
+          
+        </summary>
+        <h4>修复</h4>
+        <ul>
+<li>修复扫描项目 Skills 或计算时间戳时软链接循环导致的无限递归</li>
+<li>读取 Skill 文档时验证软链接目标在允许的项目根目录范围内</li>
+<li>修复导入匹配逻辑，与 UI 中显示的同步状态保持一致</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.13.0</span>
+          <span class="date">2026-04-10</span>
+          
+        </summary>
+        <h4>新增</h4>
+        <ul>
+<li>改进项目工作区中的 Agent 分配操作，配置和管理流程更清晰</li>
+        </ul>
+        <h4>变更</h4>
+        <ul>
+<li>优化侧边栏字体样式与对齐细节，整体界面更整洁一致</li>
+<li>更新应用内帮助内容和说明文案，使用体验更清晰</li>
+        </ul>
+        <h4>修复</h4>
+        <ul>
+<li>本版本无用户可感知的缺陷修复</li>
+        </ul>
+        <h4>移除</h4>
+        <ul>
+<li>本版本无移除项</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.12.0</span>
+          <span class="date">2026-04-10</span>
+          
+        </summary>
+        <h4>新增</h4>
+        <ul>
+<li>Skill 来源差异查看器，可在更新本地 skill 前先对比源内容变化</li>
+<li>更丰富的 skill 详情元数据面板，补充来源和更新上下文信息</li>
+<li>本地 skill 源文件缺失时的处理能力，避免已安装 skill 因源文件消失而无法管理</li>
+<li>项目能力增强：支持空项目初始化、按标签批量导出，以及侧边栏同步健康状态指示</li>
+<li>扩展 Agent 支持，并进一步完善 Agent 设置管理</li>
+        </ul>
+        <h4>变更</h4>
+        <ul>
+<li>澄清项目工作区相关文案和项目内添加 skill 的操作表达</li>
+<li>优化启动时 skill 更新通知的跳转，并细化设置页和侧边栏部分 UI</li>
+        </ul>
+        <h4>修复</h4>
+        <ul>
+<li>修复 skill 详情 Markdown 刷新后重置当前视图的问题</li>
+<li>避免 monorepo 无实际变更更新时误做文件替换，并显示正确的更新提示</li>
+<li>改进项目同步状态准确性、Git 同步错误提示和网络错误识别</li>
+<li>修复网格卡片高度不齐、侧边栏操作按钮布局抖动、大字号裁切，以及场景同步模式记录不准确的问题</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.11.1</span>
+          <span class="date">2026-03-28</span>
+          
+        </summary>
+        <h4>变更</h4>
+        <ul>
+<li>简化自定义 Agent 表单布局和文案</li>
+<li>GitHub Releases 支持双语更新日志（中文 + 英文）</li>
+<li>README 补充自定义工具功能说明</li>
+        </ul>
+        <h4>修复</h4>
+        <ul>
+<li>修复设置页在较大字号下操作按钮被裁切的问题</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.11.0</span>
+          <span class="date">2026-03-27</span>
+          
+        </summary>
+        <h4>新增</h4>
+        <ul>
+<li>自定义 Agent 支持：添加、配置和移除用户自定义 Agent，可设置自定义 skills 目录</li>
+<li>内置 Agent 路径覆盖：可为任意内置 Agent 自定义 skills 目录路径</li>
+<li>设置页内联路径编辑，支持原生文件夹选择器</li>
+<li>旧版工具 key 迁移（clawdbot → openclaw），自动数据迁移</li>
+        </ul>
+        <h4>修复</h4>
+        <ul>
+<li>修复工具 key 重映射逻辑，避免迁移时误删已有记录</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.10.0</span>
+          <span class="date">2026-03-25</span>
+          
+        </summary>
+        <h4>新增</h4>
+        <ul>
+<li>项目 skill 列表支持拖拽排序</li>
+<li>仪表盘 skill 卡片可点击快速导航</li>
+<li>Marketplace 贡献者快速筛选</li>
+<li>Marketplace 视图中展开/收起所有分组按钮</li>
+<li>启动时自动检查 skill 更新，带通知徽章</li>
+<li>Toast 通知可点击跳转到相关页面</li>
+<li>文字大小设置，提升可读性</li>
+<li>新增繁体中文（zh-TW）语言支持</li>
+        </ul>
+        <h4>变更</h4>
+        <ul>
+<li>简化 Marketplace 布局，移除来源分组</li>
+<li>改进扫描功能：插件目录检测、重命名支持、日期显示</li>
+        </ul>
+        <h4>修复</h4>
+        <ul>
+<li>修复 dnd-kit 依赖缺失导致构建失败</li>
+<li>修复 React hook 违规和 lint 警告</li>
+<li>修复场景删除边界情况和同步错误日志</li>
+<li>修复 skill 扫描时的 Git 重复警告</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.9.0</span>
+          <span class="date">2026-03-23</span>
+          
+        </summary>
+        <h4>新增</h4>
+        <ul>
+<li>Skills 和项目 Skills 多选批量操作</li>
+<li>按场景的 skill-agent 开关，实现细粒度控制</li>
+<li>无场景时自动创建 Default 场景</li>
+        </ul>
+        <h4>修复</h4>
+        <ul>
+<li>改进批量操作健壮性和导出选择处理</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.8.0</span>
+          <span class="date">2026-03-23</span>
+          
+        </summary>
+        <h4>新增</h4>
+        <ul>
+<li>侧边栏场景和项目支持拖拽排序</li>
+<li>Git 安装预览对话框，带备份同步</li>
+<li>来源筛选标签动态溢出，弹出式显示</li>
+<li>系统托盘菜单改进，新增场景切换器</li>
+        </ul>
+        <h4>修复</h4>
+        <ul>
+<li>防止 skill 安装覆盖已有 skill，改进名称冲突检测</li>
+<li>解压 ZIP 时保留 Unix 文件权限</li>
+<li>安全加固：路径遍历防护、CSP 改进、输入过滤</li>
+<li>Git 预览/安装生命周期中的临时目录清理</li>
+<li>来源筛选溢出健壮性、无障碍访问和布局修复</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.7.0</span>
+          <span class="date">2026-03-22</span>
+          
+        </summary>
+        <h4>新增</h4>
+        <ul>
+<li>macOS 自定义托盘图标，全彩 RGBA 渲染</li>
+<li>关闭窗口时隐藏到托盘，可配置关闭行为对话框</li>
+<li>设置中的托盘图标开关，懒加载托盘创建</li>
+<li>Git clone 和网络请求的代理支持</li>
+<li>My Skills 多选模式和批量删除</li>
+<li>设置中 Agent 启用/禁用开关</li>
+        </ul>
+        <h4>修复</h4>
+        <ul>
+<li>改进托盘关闭行为，优化退出流程和 UI 细节</li>
+<li>统一代理处理，增加 URL 校验</li>
+<li>前端、后端和 CI 安全加固</li>
+<li>批量删除错误处理和缺失 i18n key 修复</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.6.0</span>
+          <span class="date">2026-03-19</span>
+          
+        </summary>
+        <h4>新增</h4>
+        <ul>
+<li>Git 版本历史面板显示当前快照版本</li>
+        </ul>
+        <h4>变更</h4>
+        <ul>
+<li>放大侧边栏 logo 提升可见度</li>
+<li>改进错误处理和代码结构</li>
+        </ul>
+        <h4>修复</h4>
+        <ul>
+<li>修复版本历史中快照标签显示格式</li>
+<li>修复提交信息占位符文本</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.5.0</span>
+          <span class="date">2026-03-18</span>
+          
+        </summary>
+        <h4>新增</h4>
+        <ul>
+<li>Git 快照版本管理：创建和恢复 skills 库的时间点快照</li>
+<li>从本地文件夹批量导入 skills</li>
+<li>快照标签在同步时自动推送到远程</li>
+        </ul>
+        <h4>变更</h4>
+        <ul>
+<li>重新设计 skill 详情面板头部布局</li>
+<li>同步按钮改用琥珀色调替代红色，视觉更清晰</li>
+<li>协调 skills 索引时支持更深层目录扫描（嵌套文件夹结构）</li>
+        </ul>
+        <h4>修复</h4>
+        <ul>
+<li>快照恢复时正确处理文件删除，失败时自动回滚</li>
+<li>修复重试推送失败后不再创建重复快照标签</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.4.1</span>
+          <span class="date">2026-03-15</span>
+          
+        </summary>
+        <h4>新增</h4>
+        <ul>
+<li>Skill 安装过程中可取消</li>
+<li>克隆超时防止安装无限挂起</li>
+<li>重复安装检测，防止重复安装同一 skill</li>
+<li>单实例限制，防止打开多个应用窗口</li>
+        </ul>
+        <h4>变更</h4>
+        <ul>
+<li>所有后端操作异步化，提升应用响应速度</li>
+        </ul>
+        <h4>修复</h4>
+        <ul>
+<li>修复文件夹名与 SKILL.md 名称不同时 skill 目录无法识别</li>
+<li>修复安装按钮未显示&quot;取消&quot;标签文本</li>
+<li>修复 Windows 自动更新失效</li>
+<li>修复发布构建缺少更新签名文件</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.4.0</span>
+          <span class="date">2026-03-14</span>
+          
+        </summary>
+        <h4>新增</h4>
+        <ul>
+<li>Skill 卡片安装进度 toast 和已安装状态指示</li>
+        </ul>
+        <h4>变更</h4>
+        <ul>
+<li>浏览命令异步化，客户端搜索结果缓存提升性能</li>
+        </ul>
+        <h4>修复</h4>
+        <ul>
+<li>禁用所有搜索输入框的自动纠错和拼写检查</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.3.0</span>
+          <span class="date">2026-03-12</span>
+          
+        </summary>
+        <h4>新增</h4>
+        <ul>
+<li>项目管理：查看和管理项目目录中的 <code>.claude/skills/</code></li>
+<li>项目 skills 操作（导入、导出、开关、删除）</li>
+<li>Skill 标签系统和筛选 UI</li>
+<li>项目 skills 同步状态追踪和双向更新</li>
+        </ul>
+        <h4>变更</h4>
+        <ul>
+<li>提取 SkillMarkdown 组件，改进标签 UX</li>
+<li>加固项目 skill 路径遍历防护，使用 dir_name 作为稳定 key</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.2.0</span>
+          <span class="date">2026-03-12</span>
+          
+        </summary>
+        <h4>新增</h4>
+        <ul>
+<li>Skills 库 Git 备份和同步，支持多机同步</li>
+<li>My Skills 页面 Git 同步控制（提交推送、拉取）</li>
+        </ul>
+        <h4>变更</h4>
+        <ul>
+<li>将 Git 同步操作从设置移至 My Skills 页面，更便于访问</li>
+<li>简化 Git 备份 UI，移除自定义提交信息输入</li>
+<li>更新 Git 同步文档以反映新 UI 布局</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.1.3</span>
+          <span class="date">2026-03-09</span>
+          
+        </summary>
+        <h4>新增</h4>
+        <ul>
+<li>应用内自动更新支持（基于 tauri-plugin-updater）</li>
+        </ul>
+        <h4>修复</h4>
+        <ul>
+<li>改进更新 UX：semver 比较、回退下载和 i18n 修复</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.1.2</span>
+          <span class="date">2026-03-09</span>
+          
+        </summary>
+        <h4>新增</h4>
+        <ul>
+<li>设置页检查更新按钮</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.1.1</span>
+          <span class="date">2026-03-09</span>
+          
+        </summary>
+        <h4>新增</h4>
+        <ul>
+<li>市场搜索结果按下载量排序</li>
+        </ul>
+        <h4>修复</h4>
+        <ul>
+<li>市场搜索输入防抖，减少延迟和过时结果</li>
+<li>改进亮色/暗色模式颜色对比度，简化 skill 状态徽章</li>
+<li>提升亮色和暗色主题下的文字可读性</li>
+<li>增大字号提升可读性，添加 CJK 字体栈</li>
+<li>增大字号和窗口尺寸提升可读性</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.1.0</span>
+          <span class="date">2026-03-08</span>
+          
+        </summary>
+        <h4>新增</h4>
+        <ul>
+<li>Windows 和 Linux 支持：跨平台文件管理器打开、控制台窗口隐藏</li>
+<li>后端命令 <code>get_central_repo_path</code> 向前端暴露真实仓库路径</li>
+<li>Windows 上 <code>.config/</code> 路径的工具适配器回退策略</li>
+        </ul>
+        <h4>变更</h4>
+        <ul>
+<li>UI 文本从 macOS 专用（&quot;Open in Finder&quot;、&quot;Built for macOS&quot;）改为跨平台措辞</li>
+<li>设置页显示动态仓库路径替代硬编码的 <code>~/.skills-manager/</code></li>
+<li>CI Windows 冒烟测试简化为仅 <code>cargo check</code>（避免重复前端构建）</li>
+<li>重命名 <code>open_central_repo_in_finder</code> 为 <code>open_central_repo_folder</code></li>
+        </ul>
+        <h4>修复</h4>
+        <ul>
+<li>修复 Windows <code>explorer.exe</code> 因非零退出码误报错误</li>
+<li>修复 Linux 设置 UI 中 <code>/home/&lt;user&gt;</code> → <code>~</code> 路径缩写缺失</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.0.1</span>
+          <span class="date">2026-03-08</span>
+          
+        </summary>
+        <h4>新增</h4>
+        <ul>
+<li>GitHub Actions 跨平台构建工作流（macOS、Linux、Windows）</li>
+<li>CHANGELOG 和 macOS 故障排除指南</li>
+        </ul>
+        <h4>变更</h4>
+        <ul>
+<li>将同步/取消同步按钮从 skill 卡片列表移至 SkillDetailPanel</li>
+<li>将资源文件（图标、演示 GIF）从 docs/ 移至 assets/</li>
+<li>设置 bundle targets 为 &quot;all&quot; 以支持跨平台构建</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.0.0</span>
+          <span class="date">2025-03-08</span>
+          
+        </summary>
+        <h4>新增</h4>
+        <ul>
+<li>Skills Manager v2 首次发布，基于 Tauri 后端</li>
+<li>场景管理：创建、重命名、删除和切换场景</li>
+<li>场景图标和同步引擎改进</li>
+<li>亮色/暗色主题支持，跟随系统偏好</li>
+<li>全局搜索对话框和帮助对话框</li>
+<li>可配置同步模式和启动场景同步</li>
+<li>市场 skill 卡片外部链接按钮</li>
+<li>市场搜索/筛选、错误横幅和增强确认对话框</li>
+<li>Git 类型 skill 更新检查和更新</li>
+<li>市场 skill 列表加载更多分页</li>
+<li>Skill 去重：安装前检查中央路径</li>
+        </ul>
+        <h4>变更</h4>
+        <ul>
+<li>重新设计 MySkills 卡片和列表布局，更紧凑</li>
+<li>统一 UI 样式，紧凑一致的设计系统</li>
+<li>市场 skill 列表分页和本地扫描 UI 扁平化</li>
+<li>统一 skill 卡片元数据为单一优先级状态徽章</li>
+<li>紧凑 skill 卡片和列表行布局，内联操作按钮</li>
+<li>紧凑市场工具栏布局，重新设计 skill 卡片</li>
+<li>简化本地安装部分 UI</li>
+<li>改进 skill 详情面板渲染和市场卡片布局</li>
+<li>引入共享 app-page 工具类，统一 UI 布局</li>
+<li>移除全局搜索和顶栏，在设置中添加帮助按钮</li>
+<li>更新应用图标</li>
+        </ul>
+        <h4>修复</h4>
+        <ul>
+<li>用 Tauri 程序化拖拽条替代 CSS <code>-webkit-app-region</code> 拖拽</li>
+<li>用自定义应用 logo 图片替代侧边栏 Hammer 图标</li>
+        </ul>
+      </details>
+</div>
+<footer class="footer">Skills Manager &copy; 2026 · 仅限企业内部使用</footer>
+</body>
+</html>

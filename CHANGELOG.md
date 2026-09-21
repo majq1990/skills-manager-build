@@ -8,13 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.25.7] - 2026-09-16
 
 ### Release Overview
-- 
+- "Report issue" now goes straight to the internal feedback channel instead of asking users to paste diagnostics into a GitHub issue; internal users no longer need a GitHub account.
 
 ### User-facing
-- 
+- **"Report issue" opens the feedback channel directly**: clicking it in Settings collects diagnostics (version, OS, recent log excerpt), opens the feedback dialog with the description pre-filled, and submits through the internal feedback flow. The old "diagnostics copied — paste into a GitHub issue" path is gone; internal users cannot reach GitHub, so that path never actually worked.
+- **Feedback dialog gains prefill and submit callback**: the description is pre-populated but stays editable; on successful submit the panic banner and `last_panic.log` record are cleared.
+- The log excerpt is trimmed to the last 60 lines (full logs remain available via "Export logs" as a zip) to keep the feedback description readable.
 
 ### Developer & Governance
-- 
+- FeedbackDialog gains `prefillDescription` / `onSubmitted` props; Settings no longer depends on the clipboard manager plugin.
+
 ## [1.25.6] - 2026-09-10
 
 ### Added

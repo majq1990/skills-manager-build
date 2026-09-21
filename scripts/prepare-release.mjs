@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 const root = process.cwd();
 const args = process.argv.slice(2);
@@ -120,10 +121,17 @@ function main() {
   fs.writeFileSync(changelogPath, nextChangelog);
   fs.writeFileSync(changelogZhPath, nextChangelogZh);
 
+  // Keep the self-hosted update-history page (deployed next to download.html
+  // on the demo server) in sync with the changelog.
+  execFileSync(process.execPath, [path.join(root, 'scripts', 'build-changelog-page.mjs')], {
+    stdio: 'inherit',
+  });
+
   console.log(`Prepared release ${nextVersion}`);
   console.log('Updated:');
   console.log('- CHANGELOG.md');
   console.log('- CHANGELOG-zh.md');
+  console.log('- changelog.html');
   console.log('- package.json');
   console.log('- src-tauri/tauri.conf.json');
   console.log('- src/i18n/en.json');

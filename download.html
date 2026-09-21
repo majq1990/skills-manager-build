@@ -44,6 +44,13 @@
     .dl-list .ext { color: var(--muted); font-size: 0.8rem; font-weight: 600; text-transform: uppercase; }
     .dl-list .size { color: var(--muted); font-size: 0.75rem; margin-left: 8px; }
     .version-badge { display: inline-flex; align-items: center; gap: 6px; background: #1a3322; color: var(--green); font-size: 0.8rem; padding: 4px 10px; border-radius: 20px; margin-left: 8px; }
+    .header-links { margin-top: 16px; display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; }
+    .header-links a {
+      color: var(--muted); text-decoration: none; font-size: 0.85rem;
+      border: 1px solid var(--border); border-radius: 8px; padding: 6px 14px;
+      transition: border-color 0.15s, color 0.15s;
+    }
+    .header-links a:hover { border-color: var(--accent); color: var(--text); }
     .footer { text-align: center; padding: 20px; color: var(--muted); font-size: 0.8rem; border-top: 1px solid var(--border); margin-top: 40px; }
     .spinner { display: none; text-align: center; padding: 40px; color: var(--muted); }
     .loading .spinner { display: block; }
@@ -54,6 +61,9 @@
 <header>
   <h1>Skills Manager <span id="ver"></span></h1>
   <p>企业 Skill 管理与分发桌面工具 — 选择你的平台下载</p>
+  <div class="header-links">
+    <a href="./changelog.html">更新历史</a>
+  </div>
 </header>
 <div class="container loading" id="app">
   <div class="spinner">加载中...</div>
