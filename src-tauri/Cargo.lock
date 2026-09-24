@@ -4793,6 +4793,7 @@ dependencies = [
  "urlencoding",
  "uuid",
  "walkdir",
+ "windows",
  "winreg 0.52.0",
  "zip 2.4.2",
 ]

@@ -972,6 +972,16 @@ pub fn run() {
                 step.elapsed().as_millis()
             );
 
+            // Guard Windows session end (shutdown/logoff/restart): tao 0.34.5
+            // panics with "cannot move state from Destroyed" when it handles
+            // WM_ENDSESSION itself and the loop dispatches one more event.
+            let step = Instant::now();
+            core::session_end_guard::install(app.handle());
+            log::info!(
+                "startup: session-end guard installed in {} ms",
+                step.elapsed().as_millis()
+            );
+
             log::info!(
                 "startup: setup() body total {} ms",
                 setup_start.elapsed().as_millis()

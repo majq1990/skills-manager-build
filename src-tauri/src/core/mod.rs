@@ -29,6 +29,7 @@ pub mod project_scanner;
 pub mod repo_lock;
 pub mod scanner;
 pub mod scenario_service;
+pub mod session_end_guard;
 pub mod skill_auto_updater;
 pub mod skill_metadata;
 pub mod skill_packer;
