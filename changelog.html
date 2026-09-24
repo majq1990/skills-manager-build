@@ -65,7 +65,7 @@
         </summary>
         <h4>修复</h4>
         <ul>
-<li><strong>企业账号登录态不再每次重开都丢</strong>：登录成功后 token 加密落库（<code>settings</code> 表 + AES-256-GCM，与代理凭据同级保护），启动时自动恢复；JWT 过期在本地判定，过期才要求重新登录，不必先撞一串 401。登出会同时清掉落盘凭据。</li>
+<li><strong>企业账号登录态不再每次重开都丢</strong>：登录成功后 token 加密落库（<code>settings</code> 表 + AES-256-GCM，与代理凭据同级保护），启动时自动恢复；JWT 过期在本地判定，过期才要求重新登录，不必先撞一串 401。登出会同时清掉落盘凭据与内存态（此前传空串不会真正清除，<code>is_authenticated</code> 仍返回 true）。</li>
 <li><strong>退出时的偶发崩溃</strong>（<code>cannot move state from Destroyed</code>）：托盘退出/设置退出加了幂等守卫，重复触发不会在事件循环拆除后再次 <code>exit()</code>；同时去掉退出前手动 <code>destroy()</code> 窗口——<code>app.exit()</code> 本身就会拆除窗口，那次 destroy 反而往正在收尾的事件循环里投递窗口事件触发 panic。</li>
 <li><strong>「skills repository is busy」报错</strong>：中央仓库被其他操作占用时，安装 skill、管理 skill 到 Agent、git 备份等操作不再直接失败，改为等待最多 30 秒（锁释放后立即继续）。真正原因是后台托盘更新检查给每个 skill 单独加仓库锁，skill 数量多时锁几乎一直被占，把用户操作全部挡住——该检查只读 git remote / 本地路径并写数据库列，不碰中央仓库文件，已移除这把锁。</li>
 <li><strong>错误弹窗显示「[object Object]」</strong>：Rust 侧 <code>AppError</code> 序列化后是 <code>{kind, message}</code> 对象，前端直接 <code>String(err)</code> 会显示成 <code>[object Object]</code>。现在所有 invoke 调用统一走一层包装，把结构化错误还原成可读文案，真实原因（如上面的锁冲突）不再被掩盖。</li>

@@ -112,8 +112,15 @@ impl EnterpriseApi {
         }
     }
 
+    /// 设置（或清除）token。空串按清除处理：`enterprise_logout` 传的是空串，
+    /// 若存成 `Some("")`，`enterprise_is_authenticated` 会继续返回 true，
+    /// 登出后内存态还挂着，所有请求带着空 Bearer 头去撞 401。
     pub fn set_token(&mut self, token: String) {
-        self.token = Some(token);
+        self.token = if token.trim().is_empty() {
+            None
+        } else {
+            Some(token)
+        };
     }
 
     pub fn get_token(&self) -> Option<&str> {
@@ -734,5 +741,29 @@ impl EnterpriseApi {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn set_token_empty_string_clears_token() {
+        let mut api = EnterpriseApi::new("https://example.invalid/skill-api");
+        api.set_token("jwt-token".to_string());
+        assert_eq!(api.get_token(), Some("jwt-token"));
+
+        // 登出路径传的是空串；必须真正清掉，否则 is_authenticated 仍为 true。
+        api.set_token(String::new());
+        assert_eq!(api.get_token(), None);
+        assert!(api.auth_header().is_err());
+    }
+
+    #[test]
+    fn set_token_whitespace_only_clears_token() {
+        let mut api = EnterpriseApi::new("https://example.invalid/skill-api");
+        api.set_token("   ".to_string());
+        assert_eq!(api.get_token(), None);
     }
 }
