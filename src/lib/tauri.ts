@@ -1,4 +1,22 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke as tauriInvoke } from "@tauri-apps/api/core";
+
+/**
+ * Tauri rejects with the serialized `AppError` (`{ kind, message }`) object,
+ * not a string. Without this normalization every `catch` site that stringifies
+ * the error shows the user "[object Object]" instead of the real message.
+ */
+async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
+  try {
+    return await tauriInvoke<T>(cmd, args);
+  } catch (err) {
+    if (err instanceof Error) throw err;
+    if (err && typeof err === "object" && "message" in err) {
+      const { message } = err as { message: unknown };
+      throw new Error(typeof message === "string" ? message : JSON.stringify(message));
+    }
+    throw new Error(typeof err === "string" ? err : JSON.stringify(err));
+  }
+}
 
 // ── Types ──
 

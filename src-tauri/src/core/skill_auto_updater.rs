@@ -6,7 +6,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Runtime};
 
 use crate::commands::skills::{check_skill_update_internal, update_git_skill_internal};
-use crate::core::repo_lock::RepoLock;
+use crate::core::repo_lock::{RepoLock, DEFAULT_WAIT};
 use crate::core::skill_store::SkillStore;
 
 const SETTING_INTERVAL: &str = "auto_update_check_interval";
@@ -156,7 +156,7 @@ fn run_round_blocking(store: &SkillStore) -> Result<(), String> {
         // The check holds the repo lock; it must be released before applying,
         // because update_git_skill_internal acquires the lock itself.
         let status = {
-            let _lock = match RepoLock::acquire("auto-update check") {
+            let _lock = match RepoLock::acquire_waiting("auto-update check", DEFAULT_WAIT) {
                 Ok(lock) => lock,
                 Err(_) => {
                     failed += 1;

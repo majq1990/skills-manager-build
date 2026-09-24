@@ -50,7 +50,7 @@
 <body>
 <header>
   <h1>Skills Manager 更新历史</h1>
-  <p>企业 Skill 管理与分发桌面工具 — 版本更新记录（最新版本 v1.25.7，2026-09-16）</p>
+  <p>企业 Skill 管理与分发桌面工具 — 版本更新记录（最新版本 v1.25.8，2026-09-24）</p>
   <div class="links">
     <a href="./download.html">&larr; 返回下载页</a>
     <a href="https://github.com/majq1990/skills-manager-build/releases">GitHub Releases</a>
@@ -59,9 +59,21 @@
 <div class="container">
       <details class="entry" open>
         <summary>
+          <span class="ver">v1.25.8</span>
+          <span class="date">2026-09-24</span>
+          <span class="current">当前版本</span>
+        </summary>
+        <h4>修复</h4>
+        <ul>
+<li><strong>「skills repository is busy」报错</strong>：中央仓库被其他操作占用时，安装 skill、管理 skill 到 Agent、git 备份等操作不再直接失败，改为等待最多 30 秒（锁释放后立即继续）。真正原因是后台托盘更新检查给每个 skill 单独加仓库锁，skill 数量多时锁几乎一直被占，把用户操作全部挡住——该检查只读 git remote / 本地路径并写数据库列，不碰中央仓库文件，已移除这把锁。</li>
+<li><strong>错误弹窗显示「[object Object]」</strong>：Rust 侧 <code>AppError</code> 序列化后是 <code>{kind, message}</code> 对象，前端直接 <code>String(err)</code> 会显示成 <code>[object Object]</code>。现在所有 invoke 调用统一走一层包装，把结构化错误还原成可读文案，真实原因（如上面的锁冲突）不再被掩盖。</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
           <span class="ver">v1.25.7</span>
           <span class="date">2026-09-16</span>
-          <span class="current">当前版本</span>
+          
         </summary>
         <h4>发布概览</h4>
         <ul>

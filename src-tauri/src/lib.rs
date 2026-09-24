@@ -612,16 +612,12 @@ fn check_updates_from_tray<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
                 .map(|skill| skill.id)
                 .collect();
             for skill_id in ids {
-                let _repo_lock = match core::repo_lock::RepoLock::acquire("tray check skill update")
-                {
-                    Ok(lock) => lock,
-                    Err(err) => {
-                        log::warn!(
-                            "Tray update check: failed to acquire repo lock for {skill_id}: {err}"
-                        );
-                        continue;
-                    }
-                };
+                // No repo lock here on purpose: check_skill_update_internal only
+                // reads the source (git remote / local path) and writes
+                // `update_status` DB columns — it never touches the central
+                // repo files the lock protects. Holding an exclusive lock per
+                // skill starved user operations (toggles, installs) with
+                // "skills repository is busy" whenever the skill count is high.
                 if let Err(err) = commands::skills::check_skill_update_internal(
                     &store_for_task,
                     &skill_id,

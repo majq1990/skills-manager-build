@@ -6,7 +6,7 @@ use anyhow::{anyhow, bail};
 use app_lib::commands::skills as cmd;
 use app_lib::core::{
     app_state, central_repo, error::AppError, git_backup, git_fetcher, installer, memory,
-    repo_lock::RepoLock, scenario_service, skill_metadata, skill_store::SkillStore, skillssh_api,
+    repo_lock::{RepoLock, DEFAULT_WAIT}, scenario_service, skill_metadata, skill_store::SkillStore, skillssh_api,
     sync_engine, sync_metadata, tool_service,
 };
 use clap::{Args, Parser, Subcommand};
@@ -732,7 +732,7 @@ fn run_agents(args: AgentsArgs, store: &SkillStore, json: bool) -> anyhow::Resul
         AgentsCommand::Sync { id, tool } => {
             let agent_id = resolve_agent_id(store, &id)?;
             let outcome = {
-                let _lock = RepoLock::acquire("cli agents sync")?;
+                let _lock = RepoLock::acquire_waiting("cli agents sync", DEFAULT_WAIT)?;
                 agent_service::sync_agent_to_tool(store, &agent_id, &tool)?
             };
             print_json(
@@ -747,7 +747,7 @@ fn run_agents(args: AgentsArgs, store: &SkillStore, json: bool) -> anyhow::Resul
         AgentsCommand::Unsync { id, tool } => {
             let agent_id = resolve_agent_id(store, &id)?;
             {
-                let _lock = RepoLock::acquire("cli agents unsync")?;
+                let _lock = RepoLock::acquire_waiting("cli agents unsync", DEFAULT_WAIT)?;
                 agent_service::unsync_agent_from_tool(store, &agent_id, &tool)?;
             }
             print_json(&serde_json::json!({"ok": true}), json);
@@ -755,7 +755,7 @@ fn run_agents(args: AgentsArgs, store: &SkillStore, json: bool) -> anyhow::Resul
         AgentsCommand::Delete { id } => {
             let agent_id = resolve_agent_id(store, &id)?;
             {
-                let _lock = RepoLock::acquire("cli agents delete")?;
+                let _lock = RepoLock::acquire_waiting("cli agents delete", DEFAULT_WAIT)?;
                 agent_service::delete_agent_artifact(store, &agent_id)?;
             }
             print_json(&serde_json::json!({"ok": true}), json);
@@ -1069,7 +1069,7 @@ fn install_local_action(
         bail!("local path does not exist: {}", path.display());
     }
 
-    let _lock = RepoLock::acquire("cli install local")?;
+    let _lock = RepoLock::acquire_waiting("cli install local", DEFAULT_WAIT)?;
     let result = installer::install_from_local(&path, name)?;
     let metadata = cmd::InstallSourceMetadata {
         source_type: "local".to_string(),
@@ -1105,7 +1105,7 @@ fn install_git_action(
         proxy_url.as_deref(),
     )?;
     let result = (|| -> anyhow::Result<(String, String, String)> {
-        let _lock = RepoLock::acquire("cli install git")?;
+        let _lock = RepoLock::acquire_waiting("cli install git", DEFAULT_WAIT)?;
         let skill_dir = cmd::resolve_skill_dir(&temp_dir, parsed.subpath.as_deref(), None)
             .map_err(map_app_err)?;
         let revision = git_fetcher::get_head_revision(&temp_dir)?;
@@ -1144,7 +1144,7 @@ fn install_skillssh_action(
     let temp_dir =
         git_fetcher::clone_repo_ref(&repo_url, None, Some(&cancel), proxy_url.as_deref())?;
     let result = (|| -> anyhow::Result<(String, String, String)> {
-        let _lock = RepoLock::acquire("cli install skillssh")?;
+        let _lock = RepoLock::acquire_waiting("cli install skillssh", DEFAULT_WAIT)?;
         let skill_dir =
             cmd::resolve_skill_dir(&temp_dir, None, Some(&skill_id_field)).map_err(map_app_err)?;
         let revision = git_fetcher::get_head_revision(&temp_dir)?;
@@ -1668,7 +1668,7 @@ fn run_adopt(
     let mut adopted = Vec::new();
     for c in &candidates {
         let dir = PathBuf::from(&c.path);
-        let _lock = RepoLock::acquire("cli adopt")?;
+        let _lock = RepoLock::acquire_waiting("cli adopt", DEFAULT_WAIT)?;
         let result = installer::install_from_local(&dir, None)?;
         let metadata = if let Some((clone_url, subpath, branch, original_url)) = &resolved_git {
             cmd::InstallSourceMetadata {
@@ -2163,7 +2163,7 @@ fn resolve_agent(
 /// Per-(agent, tool) failures are reported on stderr only.
 fn deploy_preset_agents_best_effort(store: &SkillStore, preset_id: &str) -> anyhow::Result<()> {
     let attempts = {
-        let _lock = RepoLock::acquire("cli preset agents deploy")?;
+        let _lock = RepoLock::acquire_waiting("cli preset agents deploy", DEFAULT_WAIT)?;
         app_lib::core::agent_service::sync_agent_scenario(store, preset_id)
     };
     for attempt in attempts.iter().filter(|a| !a.ok) {
@@ -2187,7 +2187,7 @@ fn deploy_preset_agents_best_effort(store: &SkillStore, preset_id: &str) -> anyh
 /// Remove the recorded agent deployments of a preset's members. Only
 /// self-deployed paths are touched, mirroring the skills teardown.
 fn unsync_preset_agents(store: &SkillStore, preset_id: &str) -> anyhow::Result<()> {
-    let _lock = RepoLock::acquire("cli preset agents unsync")?;
+    let _lock = RepoLock::acquire_waiting("cli preset agents unsync", DEFAULT_WAIT)?;
     app_lib::core::agent_service::unsync_agent_scenario(store, preset_id);
     Ok(())
 }

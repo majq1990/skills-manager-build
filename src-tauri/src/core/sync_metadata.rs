@@ -8,7 +8,7 @@ use unicode_normalization::UnicodeNormalization;
 use walkdir::WalkDir;
 
 use super::central_repo;
-use super::repo_lock::RepoLock;
+use super::repo_lock::{RepoLock, DEFAULT_WAIT};
 use super::skill_metadata;
 use super::skill_store::{ScenarioRecord, SkillRecord, SkillStore};
 
@@ -78,7 +78,7 @@ pub fn has_complete_skill_snapshot() -> bool {
 
 #[allow(dead_code)]
 pub fn write_all_from_db(store: &SkillStore) -> Result<()> {
-    let _lock = RepoLock::acquire("write sync metadata")?;
+    let _lock = RepoLock::acquire_waiting("write sync metadata", DEFAULT_WAIT)?;
     write_all_from_db_unlocked(store)
 }
 
@@ -86,7 +86,7 @@ pub(crate) fn with_repo_lock<T, F>(operation: &str, f: F) -> Result<T>
 where
     F: FnOnce() -> Result<T>,
 {
-    let _lock = RepoLock::acquire(operation)?;
+    let _lock = RepoLock::acquire_waiting(operation, super::repo_lock::DEFAULT_WAIT)?;
     f()
 }
 
@@ -101,7 +101,7 @@ pub(crate) fn write_all_from_db_unlocked(store: &SkillStore) -> Result<()> {
 
 #[allow(dead_code)]
 pub fn reindex_from_metadata(store: &SkillStore) -> Result<()> {
-    let _lock = RepoLock::acquire("reindex sync metadata")?;
+    let _lock = RepoLock::acquire_waiting("reindex sync metadata", DEFAULT_WAIT)?;
     reindex_from_metadata_unlocked(store)
 }
 
@@ -208,7 +208,7 @@ pub(crate) fn reindex_from_metadata_unlocked(store: &SkillStore) -> Result<()> {
 
 #[allow(dead_code)]
 pub fn ensure_skill_metadata(store: &SkillStore, skill_id: &str) -> Result<()> {
-    let _lock = RepoLock::acquire("write skill metadata")?;
+    let _lock = RepoLock::acquire_waiting("write skill metadata", DEFAULT_WAIT)?;
     ensure_skill_metadata_unlocked(store, skill_id)
 }
 

@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.25.8] - 2026-09-24
+
+### Fixed
+- **"skills repository is busy" errors**: when the central repository is held by another operation, installing skills, managing skills to agents and git backup no longer fail outright — they now wait up to 30 seconds for the lock and proceed as soon as it is released. Root cause: the background tray update check took an exclusive repo lock per skill, so with many skills installed the lock was almost always held and starved every user action. That check only reads the git remote / local path and writes DB columns — it never touches the central repo files — so the lock was removed.
+- **Error dialogs showing "[object Object]"**: the Rust `AppError` serializes to a `{kind, message}` object, and the frontend's `String(err)` rendered it as `[object Object]`. All invoke calls now go through one wrapper that unwraps structured errors back into readable messages, so real causes (like the lock conflict above) are no longer hidden.
+
 ## [1.25.7] - 2026-09-16
 
 ### Release Overview
