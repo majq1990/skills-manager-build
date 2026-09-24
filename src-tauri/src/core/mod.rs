@@ -8,6 +8,7 @@ pub mod content_hash;
 pub mod crypto;
 pub mod domestic_mcp_api;
 pub mod enterprise_api;
+pub mod enterprise_session;
 pub mod error;
 pub mod feedback_deploy;
 pub mod feedback_token;

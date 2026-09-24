@@ -805,7 +805,7 @@ pub fn set_tray_icon_enabled(app: &tauri::AppHandle, enabled: bool) -> Result<()
         .map_err(|e| format!("Failed to receive tray update result: {e}"))?
 }
 
-/// Quit the application cleanly: destroy the main window, then exit.
+/// Quit the application cleanly.
 ///
 /// Do NOT signal our process group here (e.g. `kill(-pgid, SIGTERM)`).
 /// On Linux the app inherits the launcher's pgid — that may be the user's
@@ -813,12 +813,21 @@ pub fn set_tray_icon_enabled(app: &tauri::AppHandle, enabled: bool) -> Result<()
 /// (terminating the parent terminal and its sibling jobs). Either is
 /// catastrophic and not worth the convenience of auto-cleaning a stray
 /// `tauri dev` vite process.
+///
+/// Idempotent on purpose: a second exit during teardown (tray Quit clicked
+/// twice, or racing the Settings exit button) used to reach tao's event loop
+/// after it had already dispatched `LoopDestroyed` and panicked with
+/// "cannot move state from Destroyed" (seen 2026-09-24).
+///
+/// No manual `window.destroy()` here either: `app.exit()` already tears the
+/// windows down, and the destroy call posts window events into a loop that may
+/// already be winding down — the same panic path.
 pub fn quit_app(app: &tauri::AppHandle) {
-    QUITTING.store(true, Ordering::SeqCst);
-    if let Some(w) = app.get_webview_window("main") {
-        if let Err(err) = w.destroy() {
-            log::error!("Failed to destroy main window while quitting: {err}");
-        }
+    if QUITTING
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return;
     }
     app.exit(0);
 }
@@ -888,6 +897,15 @@ pub fn run() {
                 builder_to_setup_ms
             );
             startup_timings.log();
+
+            // 企业账号登录态恢复：token 加密落库，这里读回塞进全局 API，
+            // 否则每次重开都要重新登录。本地校验 JWT exp，过期就保持未登录。
+            let step = Instant::now();
+            commands::enterprise::restore_session(&store_for_setup);
+            log::info!(
+                "startup: restore enterprise session done in {} ms",
+                step.elapsed().as_millis()
+            );
 
             // One-time repair for skills uploaded before sync targets were
             // registered on import: they have a center record but no target,

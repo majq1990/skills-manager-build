@@ -64,6 +64,7 @@ pub async fn enterprise_login(
     // the global ENTERPRISE_API mutex, which previously bricked every
     // enterprise command (including login) until the app was relaunched.
     let store = store.inner().clone();
+    let username_for_save = username.clone();
     let resp = tauri::async_runtime::spawn_blocking(move || {
         let mut api_guard = get_or_create_api();
         let api = api_guard.as_mut().unwrap();
@@ -73,8 +74,10 @@ pub async fn enterprise_login(
     .await??;
 
     // 登录成功后：①把 JWT 投递给各 agent 的 token 文件；②联动部署插件到已装 agent；
-    // ③后台自动更新已装的企业 skill（有 token 才能拉/下载）。均失败不影响登录本身。
+    // ③后台自动更新已装的企业 skill（有 token 才能拉/下载）；④加密落库保存登录态，
+    // 下次启动自动恢复，不再要求重新登录。均失败不影响登录本身。
     if resp.success {
+        crate::core::enterprise_session::save(&store, &username_for_save, &resp.token);
         crate::core::feedback_token::write_token(&resp.token);
         deploy_feedback_from_app(&app);
 
@@ -147,16 +150,53 @@ pub async fn enterprise_is_authenticated() -> Result<bool, AppError> {
 }
 
 #[tauri::command]
-pub async fn enterprise_logout() -> Result<(), AppError> {
-    tauri::async_runtime::spawn_blocking(|| {
+pub async fn enterprise_logout(
+    store: tauri::State<'_, std::sync::Arc<crate::core::skill_store::SkillStore>>,
+) -> Result<(), AppError> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
         let mut api_guard = get_or_create_api();
         let api = api_guard.as_mut().unwrap();
 
         api.set_token(String::new());
         crate::core::feedback_token::clear_token();
+        // 落盘的登录态也要清掉，否则下次启动又自动登上了。
+        crate::core::enterprise_session::clear(&store);
         Ok(())
     })
     .await?
+}
+
+/// 启动时恢复企业账号登录态（登录失败/过期则保持未登录，前端会弹登录框）。
+///
+/// 在 `setup()` 里同步调用：只做一次 sqlite 读 + 内存赋值，反馈插件的 token
+/// 文件重投（icacls × 3）丢到阻塞线程池，不占启动关键路径。
+pub fn restore_session(store: &crate::core::skill_store::SkillStore) {
+    let Some(session) = crate::core::enterprise_session::restore(store) else {
+        log::info!("企业登录态: 无可用登录态，保持未登录");
+        return;
+    };
+
+    {
+        let mut api_guard = get_or_create_api();
+        if let Some(api) = api_guard.as_mut() {
+            api.set_token(session.token.clone());
+        }
+    }
+
+    let token = session.token.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::core::feedback_token::write_token(&token);
+    });
+
+    log::info!(
+        "企业登录态: 已恢复登录（用户 {}）",
+        if session.username.is_empty() {
+            "未知"
+        } else {
+            &session.username
+        }
+    );
 }
 
 /// 把 feedback-monitor 插件联动部署到已安装的 agent（opencode/Claude Code/WorkBuddy）。

@@ -55,6 +55,7 @@ image = { version = "0.25", default-features = false, features = ["png", "ico"] 
 notify = "6.1.1"
 open = "5.0"
 clap = { version = "4.5", features = ["derive"] }
+base64 = "0.22"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

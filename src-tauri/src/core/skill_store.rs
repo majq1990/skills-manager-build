@@ -8,7 +8,12 @@ use super::audit_log::{AuditDraft, AuditEntry, MAX_ENTRIES as AUDIT_MAX_ENTRIES}
 use super::crypto;
 
 /// Settings keys whose values are encrypted at rest with AES-256-GCM.
-const SENSITIVE_KEYS: &[&str] = &["proxy_url", "git_backup_remote_url"];
+const SENSITIVE_KEYS: &[&str] = &[
+    "proxy_url",
+    "git_backup_remote_url",
+    // 企业登录 JWT：与 proxy 凭据同级保护，DB 里不落明文。
+    "enterprise_token",
+];
 
 pub struct SkillStore {
     conn: Mutex<Connection>,
@@ -632,6 +637,22 @@ impl SkillStore {
             params![key, stored],
         )?;
         Ok(())
+    }
+
+    /// 删除一条设置（登出时清理凭据用；键不存在不算失败）。
+    pub fn remove_setting(&self, key: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM settings WHERE key = ?1", params![key])?;
+        Ok(())
+    }
+
+    /// 读设置的原始存储值（不解密、不升级明文），仅供测试断言"落库的是密文"。
+    #[cfg(test)]
+    pub fn raw_setting_for_test(&self, key: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT value FROM settings WHERE key = ?1")?;
+        let mut rows = stmt.query_map(params![key], |row| row.get::<_, String>(0))?;
+        Ok(rows.next().and_then(|r| r.ok()))
     }
 
     pub fn remap_tool_key_references(&self, old_key: &str, new_key: &str) -> Result<()> {
