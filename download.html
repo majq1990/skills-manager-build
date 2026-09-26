@@ -118,15 +118,23 @@
     'darwin-x86_64': {
       label: 'macOS', arch: 'Intel (x64)',
       items: [
-        { label: 'DMG 镜像', ext: 'dmg', key: 'darwin-x86_64' },
+        { label: 'DMG 镜像', ext: 'dmg', key: 'darwin-x86_64-dmg' },
         { label: '.app.tar.gz', ext: 'tar.gz', key: 'darwin-x86_64' },
       ]
     },
     'darwin-aarch64': {
       label: 'macOS', arch: 'Apple Silicon (ARM)',
       items: [
-        { label: 'DMG 镜像', ext: 'dmg', key: 'darwin-aarch64' },
+        { label: 'DMG 镜像', ext: 'dmg', key: 'darwin-aarch64-dmg' },
         { label: '.app.tar.gz', ext: 'tar.gz', key: 'darwin-aarch64' },
+      ]
+    },
+    'linux-x86_64': {
+      label: 'Linux', arch: 'x64',
+      items: [
+        { label: 'AppImage', ext: 'AppImage', key: 'linux-x86_64' },
+        { label: '.deb', ext: 'deb', key: 'linux-x86_64-deb' },
+        { label: '.rpm', ext: 'rpm', key: 'linux-x86_64-rpm' },
       ]
     },
   };
@@ -138,15 +146,22 @@
     const items = [];
     for (const it of info.items) {
       const plat = platforms[it.key];
+      let url = null;
       if (plat && plat.url) {
-        items.push(plat);
+        url = plat.url;
+      } else if (it.key.endsWith('-dmg')) {
+        // DMG 不是 updater 平台条目，按版本号推导文件名
+        const arch = it.key === 'darwin-aarch64-dmg' ? 'aarch64' : 'x64';
+        url = BASE + '/skills-manager_' + data.version + '_' + arch + '.dmg';
       } else if (it.key === 'windows-x86_64-msi') {
-        const exeUrl = platforms['windows-x86_64']?.url || '';
-        const msiUrl = exeUrl.replace('x64-setup.exe', 'x64_en-US.msi');
-        items.push({ url: msiUrl, label: it.label, ext: it.ext });
+        // 兼容没有独立 msi 平台条目的旧 manifest
+        const exeUrl = (platforms['windows-x86_64'] || {}).url || '';
+        url = exeUrl.replace('x64-setup.exe', 'x64_en-US.msi');
       }
+      if (url) items.push({ url: url, label: it.label, ext: it.ext });
     }
-    cards.push({ key, info, items });
+    if (!items.length) continue;
+    cards.push({ key: key, info: info, items: items });
   }
 
   // check if we have linux entries in latest.json; if not, fallback
