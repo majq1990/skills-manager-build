@@ -146,6 +146,16 @@ fn skip_check_mode(
     }
 }
 
+/// Authorization for a deployment write: a `skill_targets` row claiming this
+/// exact path lets us replace what it recorded, otherwise we may only write
+/// where nothing of the user's would be destroyed (#363).
+fn replace_policy(recorded_mode: Option<&str>) -> sync_engine::ReplacePolicy<'_> {
+    match recorded_mode {
+        Some(mode) => sync_engine::ReplacePolicy::Recorded { mode },
+        None => sync_engine::ReplacePolicy::NoClobber,
+    }
+}
+
 pub fn sync_desired_targets(
     store: &SkillStore,
     desired_targets: &[ScenarioSyncTarget],
@@ -168,12 +178,7 @@ pub fn sync_desired_targets(
         if let Some(existing) = existing_targets.get(&key) {
             let target_path = PathBuf::from(&existing.target_path);
             if target_path != desired.target {
-                if let Err(e) = sync_engine::remove_target(&target_path) {
-                    log::warn!(
-                        "Failed to remove stale target {}: {e}",
-                        target_path.display()
-                    );
-                }
+                sync_engine::remove_recorded_target_or_warn(&target_path, &existing.mode);
                 if let Err(e) = store.delete_target(&desired.skill_id, &desired.tool) {
                     log::warn!(
                         "Failed to delete stale target record for skill {}, tool {}: {e}",
@@ -212,7 +217,19 @@ pub fn sync_desired_targets(
             }
         }
 
-        match sync_engine::sync_skill(&desired.source, &desired.target, desired.mode) {
+        // A `skill_targets` row claiming this exact path authorizes replacing
+        // what it recorded; without one we may only write where nothing of the
+        // user's would be destroyed (#363).
+        let recorded_mode = existing_targets
+            .get(&key)
+            .filter(|existing| PathBuf::from(&existing.target_path) == desired.target)
+            .map(|existing| existing.mode.clone());
+        match sync_engine::sync_skill(
+            &desired.source,
+            &desired.target,
+            desired.mode,
+            replace_policy(recorded_mode.as_deref()),
+        ) {
             Ok(actual_mode) => {
                 let now = chrono::Utc::now().timestamp_millis();
                 let target_record = SkillTargetRecord {
@@ -249,13 +266,21 @@ pub fn sync_desired_targets(
             }
             Err(e) => {
                 failed_count += 1;
-                log::warn!(
-                    "Failed to sync skill {} ({}) to {} after {} ms: {e}",
-                    desired.skill_id,
-                    desired.skill_name,
-                    desired.target.display(),
-                    target_start.elapsed().as_millis()
-                );
+                if let Some(refused) = e.downcast_ref::<sync_engine::ReplaceRefused>() {
+                    log::warn!(
+                        "Sync refused for skill {} ({}): {refused}",
+                        desired.skill_id,
+                        desired.skill_name
+                    );
+                } else {
+                    log::warn!(
+                        "Failed to sync skill {} ({}) to {} after {} ms: {e}",
+                        desired.skill_id,
+                        desired.skill_name,
+                        desired.target.display(),
+                        target_start.elapsed().as_millis()
+                    );
+                }
             }
         }
     }
@@ -376,9 +401,7 @@ pub fn sync_skill_to_active_scenario(
                 if let Some(old) = old_targets.iter().find(|t| t.tool == adapter.key) {
                     let old_path = PathBuf::from(&old.target_path);
                     if old_path != adapter.skills_dir().join(&target_name) {
-                        if let Err(e) = sync_engine::remove_target(&old_path) {
-                            log::warn!("Failed to remove stale target {}: {e}", old_path.display());
-                        }
+                        sync_engine::remove_recorded_target_or_warn(&old_path, &old.mode);
                         let _ = store.delete_target(skill_id, &adapter.key);
                     }
                 }
@@ -386,7 +409,11 @@ pub fn sync_skill_to_active_scenario(
                 let target = adapter.skills_dir().join(&target_name);
                 let mode =
                     sync_engine::sync_mode_for_tool(&adapter.key, configured_mode.as_deref());
-                match sync_engine::sync_skill(&source, &target, mode) {
+                let recorded_mode = old_targets
+                    .iter()
+                    .find(|t| t.tool == adapter.key && PathBuf::from(&t.target_path) == target)
+                    .map(|t| t.mode.clone());
+                match sync_engine::sync_skill(&source, &target, mode, replace_policy(recorded_mode.as_deref())) {
                     Ok(actual_mode) => {
                         let now = chrono::Utc::now().timestamp_millis();
                         let target_record = super::skill_store::SkillTargetRecord {
@@ -527,10 +554,19 @@ pub fn sync_active_scenario_to_tool(store: &SkillStore, tool_key: &str) {
     }
 }
 
+/// Deploy one skill to one tool.
+///
+/// `adopt = true` marks the adoption flows ("import this agent-local skill
+/// into the center", stranded-target backfill): the target directory is the
+/// user's own copy — content-verified equal by the caller — that is being
+/// brought under management, so replacing it is explicit user intent
+/// (`UserConfirmed`). Regular deployments pass `adopt = false` and only a
+/// recorded `skill_targets` row (or an empty path) authorizes a removal.
 pub fn sync_single_skill_to_tool(
     store: &SkillStore,
     skill_id: &str,
     tool: &str,
+    adopt: bool,
 ) -> Result<(), AppError> {
     let adapter = tool_adapters::find_adapter_with_store(store, tool)
         .ok_or_else(|| AppError::not_found(format!("Unknown tool: {}", tool)))?;
@@ -560,7 +596,23 @@ pub fn sync_single_skill_to_tool(
         .join(sync_engine::target_dir_name(&source, &skill.name));
     let configured_mode = store.get_setting("sync_mode").map_err(AppError::db)?;
     let mode = sync_engine::sync_mode_for_tool(tool, configured_mode.as_deref());
-    let actual_mode = sync_engine::sync_skill(&source, &target, mode).map_err(AppError::io)?;
+    let recorded_mode = if adopt {
+        None
+    } else {
+        store
+            .get_targets_for_skill(skill_id)
+            .map_err(AppError::db)?
+            .into_iter()
+            .find(|t| t.tool == tool && PathBuf::from(&t.target_path) == target)
+            .map(|t| t.mode)
+    };
+    let policy = if adopt {
+        sync_engine::ReplacePolicy::UserConfirmed
+    } else {
+        replace_policy(recorded_mode.as_deref())
+    };
+    let actual_mode = sync_engine::sync_skill(&source, &target, mode, policy)
+        .map_err(AppError::io)?;
 
     let now = chrono::Utc::now().timestamp_millis();
     let target_record = SkillTargetRecord {
@@ -651,10 +703,15 @@ fn apply_add(
         };
         let source = PathBuf::from(&skill.central_path);
         let target_name = sync_engine::target_dir_name(&source, &skill.name);
+        let skill_targets = store.get_targets_for_skill(skill_id).unwrap_or_default();
         for (tool_key, adapter) in &adapters {
             let target = adapter.skills_dir().join(&target_name);
             let mode = sync_engine::sync_mode_for_tool(tool_key, configured_mode.as_deref());
-            match sync_engine::sync_skill(&source, &target, mode) {
+            let recorded_mode = skill_targets
+                .iter()
+                .find(|t| &t.tool == tool_key && PathBuf::from(&t.target_path) == target)
+                .map(|t| t.mode.clone());
+            match sync_engine::sync_skill(&source, &target, mode, replace_policy(recorded_mode.as_deref())) {
                 Ok(actual_mode) => {
                     let now = chrono::Utc::now().timestamp_millis();
                     let target_record = SkillTargetRecord {

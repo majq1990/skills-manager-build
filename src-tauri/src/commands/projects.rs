@@ -981,8 +981,15 @@ pub async fn export_skill_to_project(
                 .ok_or_else(|| AppError::not_found(format!("Unknown agent: {}", agent_key)))?;
             let target_dir = skills_root.join(&dir_name);
             std::fs::create_dir_all(&skills_root)?;
-            sync_engine::sync_skill(&source, &target_dir, sync_engine::SyncMode::Copy)
-                .map_err(AppError::io)?;
+            // Existence was pre-checked and refused above; if something appeared
+            // in between, NoClobber keeps it instead of destroying it.
+            sync_engine::sync_skill(
+                &source,
+                &target_dir,
+                sync_engine::SyncMode::Copy,
+                sync_engine::ReplacePolicy::NoClobber,
+            )
+            .map_err(AppError::io)?;
         }
 
         Ok(())
@@ -1034,8 +1041,15 @@ pub async fn update_project_skill_from_center(
         }
 
         let source = PathBuf::from(&managed.central_path);
-        sync_engine::sync_skill(&source, &target_path, sync_engine::SyncMode::Copy)
-            .map_err(AppError::io)?;
+        // "Update this copy from center" is explicit user intent to overwrite
+        // this workspace copy.
+        sync_engine::sync_skill(
+            &source,
+            &target_path,
+            sync_engine::SyncMode::Copy,
+            sync_engine::ReplacePolicy::UserConfirmed,
+        )
+        .map_err(AppError::io)?;
         Ok(())
     })
     .await?

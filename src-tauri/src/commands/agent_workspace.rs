@@ -277,7 +277,7 @@ fn import_agent_local_skill_to_center(
         // sync path keeps the target consistent with every other managed skill:
         // sync_engine owns the on-disk artifact, so later unsync/scenario-sync
         // touch only that managed artifact, never the user's source.
-        scenario_service::sync_single_skill_to_tool(store, &existing.id, agent)?;
+        scenario_service::sync_single_skill_to_tool(store, &existing.id, agent, true)?;
         return Ok(());
     }
 
@@ -314,7 +314,7 @@ fn import_agent_local_skill_to_center(
     // central directory: `install_from_local` may have de-duplicated onto a
     // directory shared with another skill, and removing it could corrupt that
     // skill — an orphaned dir is harmless by comparison.
-    if let Err(err) = scenario_service::sync_single_skill_to_tool(store, &skill_record.id, agent) {
+    if let Err(err) = scenario_service::sync_single_skill_to_tool(store, &skill_record.id, agent, true) {
         let _ = store.delete_skill(&skill_record.id);
         return Err(err);
     }
@@ -390,7 +390,7 @@ pub fn backfill_stranded_agent_targets(store: &SkillStore) -> usize {
                 continue;
             }
 
-            match scenario_service::sync_single_skill_to_tool(store, &matched.id, &adapter.key) {
+            match scenario_service::sync_single_skill_to_tool(store, &matched.id, &adapter.key, true) {
                 Ok(()) => {
                     repaired += 1;
                     log::info!(
@@ -451,8 +451,14 @@ fn update_agent_local_skill_from_center(
     ensure_agent_skill_path(&target_path, &skills_root)?;
 
     let source = PathBuf::from(&managed.central_path);
-    sync_engine::sync_skill(&source, &target_path, sync_engine::SyncMode::Copy)
-        .map_err(AppError::io)?;
+    // "Update from center" is explicit user intent to overwrite this copy.
+    sync_engine::sync_skill(
+        &source,
+        &target_path,
+        sync_engine::SyncMode::Copy,
+        sync_engine::ReplacePolicy::UserConfirmed,
+    )
+    .map_err(AppError::io)?;
     Ok(())
 }
 

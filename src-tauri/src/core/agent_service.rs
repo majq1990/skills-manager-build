@@ -402,6 +402,22 @@ pub fn sync_agent_to_tool(
     deploy_with_adapter(store, agent_id, &adapter)
 }
 
+/// The mode recorded by the `agent_targets` row for the last deployment of
+/// this agent to this tool, when that row claims exactly `target_dir`.
+/// The caller turns it into a `ReplacePolicy::Recorded`; `None` means
+/// NoClobber (#363).
+fn agent_recorded_mode(
+    store: &super::skill_store::SkillStore,
+    agent_id: &str,
+    tool: &str,
+    target_dir: &Path,
+) -> Result<Option<String>> {
+    Ok(store
+        .get_agent_target(agent_id, tool)?
+        .filter(|t| PathBuf::from(&t.target_path) == target_dir)
+        .map(|t| t.mode))
+}
+
 fn deploy_with_adapter(
     store: &super::skill_store::SkillStore,
     agent_id: &str,
@@ -483,7 +499,17 @@ fn deploy_with_adapter(
                 .agents_dir()
                 .ok_or_else(|| anyhow!("tool '{}' has no skills dir", adapter.key))?;
             let target_dir = skills_root.join(&agent.name);
-            sync_engine::sync_skill(&staging_root, &target_dir, mode)?;
+            let recorded_mode =
+                agent_recorded_mode(store, agent_id, &adapter.key, &target_dir)?;
+            sync_engine::sync_skill(
+                &staging_root,
+                &target_dir,
+                mode,
+                match recorded_mode.as_deref() {
+                    Some(m) => sync_engine::ReplacePolicy::Recorded { mode: m },
+                    None => sync_engine::ReplacePolicy::NoClobber,
+                },
+            )?;
             (target_dir, hash.clone())
         }
         (DeploySource::File(file), AgentDeployKind::ExpertPlugin) => {
@@ -513,7 +539,17 @@ fn deploy_with_adapter(
                 .agents_dir()
                 .ok_or_else(|| anyhow!("tool '{}' has no expert plugins dir", adapter.key))?;
             let target_dir = plugins_root.join(&agent.name);
-            sync_engine::sync_skill(&staging_root, &target_dir, mode)?;
+            let recorded_mode =
+                agent_recorded_mode(store, agent_id, &adapter.key, &target_dir)?;
+            sync_engine::sync_skill(
+                &staging_root,
+                &target_dir,
+                mode,
+                match recorded_mode.as_deref() {
+                    Some(m) => sync_engine::ReplacePolicy::Recorded { mode: m },
+                    None => sync_engine::ReplacePolicy::NoClobber,
+                },
+            )?;
 
             // Register the plugin in the local marketplace manifest.
             let marketplace_dir = plugins_root

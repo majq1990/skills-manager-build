@@ -34,7 +34,7 @@ fn sync_skill_to_tool_internal(
     skill_id: &str,
     tool: &str,
 ) -> Result<(), AppError> {
-    scenario_service::sync_single_skill_to_tool(store, skill_id, tool)
+    scenario_service::sync_single_skill_to_tool(store, skill_id, tool, false)
 }
 
 #[tauri::command]
@@ -96,7 +96,7 @@ pub async fn unsync_skill_from_tool(
 
             if let Some(target) = targets.iter().find(|t| t.tool == tool) {
                 let target_path = PathBuf::from(&target.target_path);
-                sync_engine::remove_target(&target_path).ok();
+                sync_engine::remove_recorded_target_or_warn(&target_path, &target.mode);
             }
 
             store
@@ -272,7 +272,10 @@ pub async fn set_skill_tool_toggle(
                     .map_err(AppError::db)?;
                 if let Some(target) = targets.iter().find(|target| target.tool == tool) {
                     // Safe because the app currently guarantees a single active scenario.
-                    sync_engine::remove_target(&PathBuf::from(&target.target_path)).ok();
+                    sync_engine::remove_recorded_target_or_warn(
+                        &PathBuf::from(&target.target_path),
+                        &target.mode,
+                    );
                 }
                 store
                     .delete_target(&skill_id, &tool)

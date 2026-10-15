@@ -40,7 +40,13 @@ fn sync_active_scenario_to_tool(store: &SkillStore, tool_key: &str) {
 fn unsync_all_for_tool(store: &SkillStore, tool_key: &str) {
     let targets = store.get_all_targets().unwrap_or_default();
     for target in targets.iter().filter(|t| t.tool == tool_key) {
-        sync_engine::remove_target(&PathBuf::from(&target.target_path)).ok();
+        // The row is dropped either way; only the on-disk removal is
+        // conditional, so a directory the user put in place of our link
+        // survives (see `remove_recorded_target_or_warn`).
+        sync_engine::remove_recorded_target_or_warn(
+            &PathBuf::from(&target.target_path),
+            &target.mode,
+        );
         store.delete_target(&target.skill_id, tool_key).ok();
     }
 }
@@ -316,7 +322,10 @@ pub async fn remove_custom_tool(
         // Remove synced targets for this tool
         let targets = store.get_all_targets().unwrap_or_default();
         for target in targets.iter().filter(|t| t.tool == key) {
-            crate::core::sync_engine::remove_target(&PathBuf::from(&target.target_path)).ok();
+            crate::core::sync_engine::remove_recorded_target_or_warn(
+                &PathBuf::from(&target.target_path),
+                &target.mode,
+            );
             store.delete_target(&target.skill_id, &key).ok();
         }
         // Remove from custom_tools list
