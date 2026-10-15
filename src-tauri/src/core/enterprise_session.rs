@@ -41,7 +41,16 @@ pub fn clear(store: &SkillStore) {
 pub fn restore(store: &SkillStore) -> Option<Session> {
     let token = match store.get_setting(TOKEN_KEY) {
         Ok(Some(t)) => t,
-        Ok(None) => return None,
+        Ok(None) => {
+            // 登出会连用户名一起清掉；用户名还在而 token 不在，说明登录态被
+            // 单独清除或丢失——这条日志用于区分"从未登录"和"登录态丢失"。
+            if let Ok(Some(username)) = store.get_setting(USERNAME_KEY) {
+                log::warn!(
+                    "企业登录态: 发现用户 {username} 的落盘记录但 token 缺失，按未登录处理"
+                );
+            }
+            return None;
+        }
         // `.secret.key` 被删或换过 → 旧密文解不开，按未登录处理并清掉残留，
         // 否则每次启动都会重复报同一个解密错误。
         Err(e) => {

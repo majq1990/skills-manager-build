@@ -5,6 +5,8 @@ import { toast } from "sonner";
 import * as api from "../lib/tauri";
 import { getErrorMessage } from "../lib/error";
 import { useApp } from "../context/AppContext";
+import { TagChipsInput } from "./TagChipsInput";
+import { sanitizeTag } from "../lib/tags";
 
 /** 把可见性取值（public/tech-manager/support）映射到 i18n label。未知值原样返回。 */
 function visibilityLabel(v: string, t: (k: string) => string): string {
@@ -58,6 +60,9 @@ export function PublishDialog({
   const [version, setVersion] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [visibility, setVisibility] = useState("");
+  const [tags, setTags] = useState<string[]>([]);
+  const [vocabulary, setVocabulary] = useState<string[]>([]);
+  const [suggestedCount, setSuggestedCount] = useState(0);
 
   const noUploadPermission = enterpriseUploadVisibilities.length === 0;
 
@@ -66,6 +71,9 @@ export function PublishDialog({
     if (!open) return;
     setVersion("");
     setSubmitting(false);
+    setTags([]);
+    setVocabulary([]);
+    setSuggestedCount(0);
 
     const allowed = enterpriseUploadVisibilities;
     if (allowed.length === 0) {
@@ -94,6 +102,28 @@ export function PublishDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, skillName]);
 
+  // 打开时读 SKILL.md 推一版推荐标签预填（用户可删可改可留空），同时拿受控词表做候选下拉。
+  useEffect(() => {
+    if (!open || !centralPath || !skillName) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const result = await api.enterpriseSuggestTags(centralPath, skillName, "");
+        if (cancelled) return;
+        setVocabulary(result.vocabulary || []);
+        // 预填的标签也要过一遍清洗，避免与服务端 normalizeTags 不一致
+        const prefilled = (result.suggested || []).map(sanitizeTag).filter(Boolean);
+        setTags(prefilled);
+        setSuggestedCount(prefilled.length);
+      } catch {
+        // 推荐失败不阻塞发布，保持空标签即可
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, centralPath, skillName]);
+
   if (!open || !skillName || !centralPath) return null;
 
   const handlePublish = async () => {
@@ -108,7 +138,8 @@ export function PublishDialog({
         skillName,
         centralPath,
         version.trim() || undefined,
-        visibility || undefined
+        visibility || undefined,
+        tags
       );
       toast.success(
         t("publish.success", {
@@ -197,6 +228,19 @@ export function PublishDialog({
                   </option>
                 ))}
               </select>
+            )}
+          </div>
+
+          {/* 标签（可选，回车确认；上传时同时写 catalog 与 SKILL.md frontmatter） */}
+          <div>
+            <label className="block text-[12px] font-medium text-secondary mb-1">
+              {t("publish.tagsLabel")}
+            </label>
+            <TagChipsInput value={tags} onChange={setTags} vocabulary={vocabulary} />
+            {suggestedCount > 0 && (
+              <p className="mt-1 text-[12px] text-faint">
+                {t("publish.tagsSuggested", { count: suggestedCount })}
+              </p>
             )}
           </div>
         </div>

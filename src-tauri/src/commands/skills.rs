@@ -609,7 +609,7 @@ pub fn delete_managed_skills_by_ids(
             let targets = store.get_targets_for_skill(skill_id)?;
             for target in &targets {
                 let target_path = PathBuf::from(&target.target_path);
-                sync_engine::remove_target(&target_path).ok();
+                sync_engine::remove_recorded_target_or_warn(&target_path, &target.mode);
             }
 
             let central = PathBuf::from(&skill.central_path);
@@ -2301,6 +2301,11 @@ pub fn resync_copy_targets(store: &SkillStore, skill_id: &str) -> Result<(), App
             &source,
             Path::new(&target.target_path),
             sync_engine::SyncMode::Copy,
+            // The row claims this path with this mode — it vouches for the
+            // directory it wrote.
+            sync_engine::ReplacePolicy::Recorded {
+                mode: &target.mode,
+            },
         )
         .map_err(AppError::io)?;
 
@@ -2560,7 +2565,10 @@ mod tests {
                 skill_id: "skill-1".to_string(),
                 tool: "cursor".to_string(),
                 target_path: target_dir.to_string_lossy().to_string(),
-                mode: "symlink".to_string(),
+                // A real directory pairs with a copy record; a symlink record
+                // over a real directory is the #435 data-loss shape and is
+                // preserved instead (see the test below).
+                mode: "copy".to_string(),
                 status: "ok".to_string(),
                 synced_at: Some(1),
                 last_error: None,
@@ -2595,6 +2603,54 @@ mod tests {
         assert!(sync_metadata::metadata_dir()
             .join("skills/skill-2.json")
             .exists());
+    }
+
+    /// #435: deleting a library skill used to delete whatever sat at each
+    /// recorded target. A real directory that replaced our symlink is the
+    /// user's local fork — it must survive the deletion, even though the row
+    /// is dropped.
+    #[test]
+    fn deleting_a_skill_preserves_user_content_that_replaced_a_recorded_link() {
+        let repo = test_repo();
+        let skill_dir = write_skill_dir("skill-one");
+        repo.store
+            .insert_skill(&sample_skill("skill-1", "skill-one", &skill_dir))
+            .unwrap();
+
+        let target_dir = repo._tmp.path().join("target-skill-one");
+        fs::create_dir_all(&target_dir).unwrap();
+        fs::write(target_dir.join("mine.txt"), "DO_NOT_OVERWRITE").unwrap();
+        repo.store
+            .insert_target(&SkillTargetRecord {
+                id: "target-1".to_string(),
+                skill_id: "skill-1".to_string(),
+                tool: "cursor".to_string(),
+                target_path: target_dir.to_string_lossy().to_string(),
+                mode: "symlink".to_string(),
+                status: "ok".to_string(),
+                synced_at: Some(1),
+                last_error: None,
+                source_hash: None,
+            })
+            .unwrap();
+
+        let result =
+            delete_managed_skills_by_ids(&repo.store, &["skill-1".to_string()]).unwrap();
+
+        assert_eq!(result.deleted, 1);
+        assert!(repo.store.get_skill_by_id("skill-1").unwrap().is_none());
+        assert!(
+            repo.store
+                .get_targets_for_skill("skill-1")
+                .unwrap()
+                .is_empty(),
+            "the stale row is still dropped"
+        );
+        assert_eq!(
+            fs::read_to_string(target_dir.join("mine.txt")).unwrap(),
+            "DO_NOT_OVERWRITE",
+            "the user's directory survives the deletion"
+        );
     }
 
     fn write_skill_at(root: &Path, rel: &str) -> PathBuf {

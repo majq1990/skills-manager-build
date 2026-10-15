@@ -1109,6 +1109,8 @@ pub fn run() {
             commands::enterprise::enterprise_delete_skill,
             commands::enterprise::enterprise_list_agents,
             commands::enterprise::enterprise_agent_document,
+            commands::enterprise::enterprise_agent_package_meta,
+            commands::enterprise::enterprise_suggest_tags,
             commands::enterprise::enterprise_upload_agent,
             commands::enterprise::enterprise_install_agent,
             commands::enterprise::enterprise_submit_feedback,

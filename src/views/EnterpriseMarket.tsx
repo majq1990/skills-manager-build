@@ -175,6 +175,7 @@ export function EnterpriseMarket() {
       (agent) =>
         agent.name.toLowerCase().includes(q) ||
         (agent.description || "").toLowerCase().includes(q) ||
+        (agent.display_name || "").toLowerCase().includes(q) ||
         (localAgentDisplayNames[agent.name.trim().toLowerCase()] || "")
           .toLowerCase()
           .includes(q)
@@ -495,7 +496,9 @@ export function EnterpriseMarket() {
                 const installed = installedAgentNames.has(agent.name.trim().toLowerCase());
                 const installing = agentInstalling.has(agent.name);
                 const displayTitle =
-                  localAgentDisplayNames[agent.name.trim().toLowerCase()] || agent.name;
+                  agent.display_name ||
+                  localAgentDisplayNames[agent.name.trim().toLowerCase()] ||
+                  agent.name;
                 return (
                   <div
                     key={agent.name}

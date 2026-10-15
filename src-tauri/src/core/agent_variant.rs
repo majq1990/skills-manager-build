@@ -27,6 +27,9 @@ pub struct ParsedAgent {
     /// Human-facing display name extracted from the frontmatter `displayName`
     /// field (plain string or `{en, zh}` mapping — zh preferred).
     pub display_name: Option<String>,
+    /// Frontmatter `version`, carried through so the publish dialog can
+    /// pre-fill it instead of letting the server auto-assign 1.0.0.
+    pub version: Option<String>,
     pub body: String,
 }
 
@@ -95,8 +98,17 @@ pub fn parse_agent_markdown(content: &str) -> Option<ParsedAgent> {
         name: field("name"),
         description: field("description"),
         display_name: yaml.get("displayName").and_then(display_name_from_yaml),
+        version: field("version"),
         body,
     })
+}
+
+/// Read `<dir>/AGENT.md` and parse its frontmatter. `None` when the file is
+/// missing or has no parseable frontmatter.
+pub fn parse_agent_file(dir: &Path) -> Option<ParsedAgent> {
+    let path = dir.join(CANONICAL_FILE_NAME);
+    let content = std::fs::read_to_string(&path).ok()?;
+    parse_agent_markdown(&content)
 }
 
 /// Rewrite a canonical AGENT.md into the shape opencode actually accepts.

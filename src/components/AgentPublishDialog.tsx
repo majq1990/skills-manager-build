@@ -5,6 +5,8 @@ import { toast } from "sonner";
 import * as api from "../lib/tauri";
 import { getErrorMessage } from "../lib/error";
 import { useApp } from "../context/AppContext";
+import { TagChipsInput } from "./TagChipsInput";
+import { sanitizeTag } from "../lib/tags";
 
 /** 把可见性取值（public/tech-manager/support）映射到 i18n label。未知值原样返回。 */
 function visibilityLabel(v: string, t: (k: string) => string): string {
@@ -34,8 +36,12 @@ export function AgentPublishDialog({ open, agentName, centralPath, onClose }: Pr
   const { t } = useTranslation();
   const { enterpriseUploadVisibilities } = useApp();
   const [version, setVersion] = useState("");
+  const [displayName, setDisplayName] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [visibility, setVisibility] = useState("");
+  const [tags, setTags] = useState<string[]>([]);
+  const [vocabulary, setVocabulary] = useState<string[]>([]);
+  const [suggestedCount, setSuggestedCount] = useState(0);
 
   const noUploadPermission = enterpriseUploadVisibilities.length === 0;
 
@@ -43,7 +49,11 @@ export function AgentPublishDialog({ open, agentName, centralPath, onClose }: Pr
   useEffect(() => {
     if (!open) return;
     setVersion("");
+    setDisplayName("");
     setSubmitting(false);
+    setTags([]);
+    setVocabulary([]);
+    setSuggestedCount(0);
 
     const allowed = enterpriseUploadVisibilities;
     if (allowed.length === 0) {
@@ -71,6 +81,36 @@ export function AgentPublishDialog({ open, agentName, centralPath, onClose }: Pr
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, agentName]);
 
+  // 打开时读 AGENT.md：用 frontmatter 的 version 预填版本框（修"包名叫 1.1.0 服务端存 1.0.0"），
+  // 并推一版推荐标签预填；两者都可改。
+  useEffect(() => {
+    if (!open || !centralPath || !agentName) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const meta = await api.enterpriseAgentPackageMeta(centralPath);
+        if (cancelled) return;
+        if (meta.version) setVersion(meta.version);
+        if (meta.display_name) setDisplayName(meta.display_name);
+      } catch {
+        // 读不到 frontmatter 就留空，服务端仍会走自动递增
+      }
+      try {
+        const result = await api.enterpriseSuggestTags(centralPath, agentName, "");
+        if (cancelled) return;
+        setVocabulary(result.vocabulary || []);
+        const prefilled = (result.suggested || []).map(sanitizeTag).filter(Boolean);
+        setTags(prefilled);
+        setSuggestedCount(prefilled.length);
+      } catch {
+        // 推荐失败不阻塞发布
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, centralPath, agentName]);
+
   if (!open || !agentName || !centralPath) return null;
 
   const handlePublish = async () => {
@@ -85,7 +125,8 @@ export function AgentPublishDialog({ open, agentName, centralPath, onClose }: Pr
         agentName,
         centralPath,
         version.trim() || undefined,
-        visibility || undefined
+        visibility || undefined,
+        tags
       );
       toast.success(
         t("agentLib.publishSuccess", {
@@ -135,10 +176,29 @@ export function AgentPublishDialog({ open, agentName, centralPath, onClose }: Pr
             </label>
             <div className="px-3 py-2 bg-bg-secondary border border-border-subtle rounded-[4px] text-[13px] text-tertiary truncate">
               {agentName}
+              {displayName && displayName !== agentName ? `（${displayName}）` : ""}
             </div>
           </div>
 
-          {/* 目标版本（可选，留空自动递增） */}
+          {/* 显示名（可选，透传到服务端 catalog，同事看到的中文名） */}
+          <div>
+            <label className="block text-[12px] font-medium text-secondary mb-1">
+              {t("publish.displayNameLabel")}
+            </label>
+            <input
+              type="text"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              maxLength={50}
+              placeholder={t("publish.displayNamePlaceholder")}
+              className="w-full px-3 py-2 bg-bg-secondary border border-border rounded-[4px] text-[13px] text-primary focus:outline-none focus:ring-2 focus:ring-accent"
+            />
+            <p className="mt-1 text-[12px] text-faint">
+              {t("publish.displayNameHint", { name: agentName })}
+            </p>
+          </div>
+
+          {/* 目标版本（可选，留空用 AGENT.md frontmatter 或服务端自动递增） */}
           <div>
             <label className="block text-[12px] font-medium text-secondary mb-1">
               {t("publish.versionLabel")}
@@ -173,6 +233,19 @@ export function AgentPublishDialog({ open, agentName, centralPath, onClose }: Pr
                   </option>
                 ))}
               </select>
+            )}
+          </div>
+
+          {/* 标签（可选，回车确认；上传时同时写 catalog 与 AGENT.md frontmatter） */}
+          <div>
+            <label className="block text-[12px] font-medium text-secondary mb-1">
+              {t("publish.tagsLabel")}
+            </label>
+            <TagChipsInput value={tags} onChange={setTags} vocabulary={vocabulary} />
+            {suggestedCount > 0 && (
+              <p className="mt-1 text-[12px] text-faint">
+                {t("publish.tagsSuggested", { count: suggestedCount })}
+              </p>
             )}
           </div>
         </div>

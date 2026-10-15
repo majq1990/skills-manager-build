@@ -39,6 +39,7 @@ pub mod skillsmp_api;
 pub mod skillssh_api;
 pub mod sync_engine;
 pub mod sync_metadata;
+pub mod tag_suggest;
 pub mod timing;
 pub mod tool_adapters;
 pub mod tool_service;

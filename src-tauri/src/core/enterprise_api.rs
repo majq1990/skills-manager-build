@@ -9,6 +9,10 @@ pub struct EnterpriseSkill {
     pub version: String,
     #[serde(default)]
     pub author: String,
+    /// UI 优先展示的中文显示名；老数据/服务端未回填时为空串，
+    /// 由前端回退到本地安装记录或身份名。
+    #[serde(alias = "displayName", default)]
+    pub display_name: String,
     #[serde(alias = "category", default)]
     pub visibility: String,
     #[serde(default)]
@@ -387,7 +391,8 @@ impl EnterpriseApi {
 
     /// 上传/发布本地技能 zip 到企业服务器并触发安全扫描。
     /// zip 根目录必须直接含 SKILL.md（不带顶层目录），且 SKILL.md 里的 name 须等于 `name`。
-    /// 字段名固定 `package`；可选 `version` text 字段（留空则服务端自动递增）。
+    /// 字段名固定 `package`；可选 `version` / `visibility` / `tags` text 字段
+    /// （version 留空则服务端自动递增，tags 留空则沿用包内 frontmatter）。
     /// 同步函数（reqwest::blocking），必须在 spawn_blocking 内调用。
     /// 非 2xx 时把服务端 message/error 文本带出来（尤其安全扫描失败 HTTP 400）。
     pub fn upload_skill(
@@ -396,6 +401,7 @@ impl EnterpriseApi {
         zip_bytes: Vec<u8>,
         version: Option<&str>,
         visibility: Option<&str>,
+        tags: Option<&[String]>,
     ) -> Result<UploadResponse> {
         use reqwest::blocking::multipart::{Form, Part};
 
@@ -419,6 +425,19 @@ impl EnterpriseApi {
         if let Some(vis) = visibility {
             if !vis.trim().is_empty() {
                 form = form.text("visibility", vis.to_string());
+            }
+        }
+        // 服务端按 JSON 数组字符串解析（见 skill-store.normalizeTags）
+        if let Some(list) = tags {
+            let cleaned: Vec<&str> = list
+                .iter()
+                .map(|t| t.trim())
+                .filter(|t| !t.is_empty())
+                .collect();
+            if !cleaned.is_empty() {
+                let json = serde_json::to_string(&cleaned)
+                    .context("Failed to serialize tags")?;
+                form = form.text("tags", json);
             }
         }
 
@@ -559,14 +578,19 @@ impl EnterpriseApi {
 
     /// Upload/publish a local agent (zip of its central directory) to the
     /// enterprise server. The zip root must contain AGENT.md and its `name`
-    /// must equal `name`. Same multipart/version/visibility contract as
-    /// `upload_skill`. Blocking — call inside spawn_blocking.
+    /// must equal `name`. Same multipart/version/visibility/tags contract as
+    /// `upload_skill`, plus an optional `displayName` text field so the
+    /// server catalog carries the Chinese display name (colleagues would
+    /// otherwise only see the English identity name).
+    /// Blocking — call inside spawn_blocking.
     pub fn upload_agent(
         &self,
         name: &str,
         zip_bytes: Vec<u8>,
         version: Option<&str>,
         visibility: Option<&str>,
+        tags: Option<&[String]>,
+        display_name: Option<&str>,
     ) -> Result<UploadResponse> {
         use reqwest::blocking::multipart::{Form, Part};
 
@@ -590,6 +614,24 @@ impl EnterpriseApi {
         if let Some(vis) = visibility {
             if !vis.trim().is_empty() {
                 form = form.text("visibility", vis.to_string());
+            }
+        }
+        // 服务端按 JSON 数组字符串解析（见 agent-store.normalizeTags）
+        if let Some(list) = tags {
+            let cleaned: Vec<&str> = list
+                .iter()
+                .map(|t| t.trim())
+                .filter(|t| !t.is_empty())
+                .collect();
+            if !cleaned.is_empty() {
+                let json = serde_json::to_string(&cleaned)
+                    .context("Failed to serialize tags")?;
+                form = form.text("tags", json);
+            }
+        }
+        if let Some(dn) = display_name {
+            if !dn.trim().is_empty() {
+                form = form.text("displayName", dn.to_string());
             }
         }
 

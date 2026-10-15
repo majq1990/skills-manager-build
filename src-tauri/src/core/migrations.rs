@@ -283,6 +283,16 @@ fn migrate_v5_to_v6(conn: &Connection) -> Result<()> {
 /// Mirrors the skills tables' shape so the sync engine, audit log,
 /// and Git backup can treat both families uniformly.
 fn migrate_v6_to_v7(conn: &Connection) -> Result<()> {
+    ensure_agent_tables(conn)
+}
+
+/// Create the agent artifact family tables (idempotent).
+///
+/// Also invoked from [`add_column_if_missing`] when a later migration needs
+/// to ALTER `agents` but the table is absent — real user databases have been
+/// found at `user_version = 8` with no `agents` table, which made the
+/// v8 → v9 ALTER fail with "no such table" and abort startup.
+fn ensure_agent_tables(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "
         CREATE TABLE IF NOT EXISTS agents (
@@ -372,6 +382,15 @@ fn add_column_if_missing(
     validate_identifier(table)?;
     validate_identifier(column)?;
 
+    // A table can be missing even when user_version says the migration that
+    // creates it already ran (hand-edited or externally replaced databases).
+    // ALTER TABLE on a missing table fails with "no such table" and aborts the
+    // whole startup migration, so build the baseline table first when we know
+    // its shape.
+    if !has_table(conn, table)? {
+        ensure_baseline_table(conn, table)?;
+    }
+
     if !has_column(conn, table, column)? {
         conn.execute(
             &format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"),
@@ -379,6 +398,18 @@ fn add_column_if_missing(
         )?;
     }
     Ok(())
+}
+
+/// Recreate a known baseline table so a later ALTER has something to work on.
+/// Unknown tables produce an explicit error instead of a cryptic SQLite one.
+fn ensure_baseline_table(conn: &Connection, table: &str) -> Result<()> {
+    match table {
+        "agents" => ensure_agent_tables(conn),
+        other => bail!(
+            "表 {other} 不存在，且没有可用于补建的基线结构（数据库可能被外部改动过）；\
+             请从备份恢复或删除该数据库后重试"
+        ),
+    }
 }
 
 fn validate_identifier(name: &str) -> Result<()> {
@@ -394,6 +425,14 @@ fn has_column(conn: &Connection, table: &str, column: &str) -> Result<bool> {
         .query_map([], |row| row.get::<_, String>(1))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(columns.iter().any(|name| name == column))
+}
+
+fn has_table(conn: &Connection, table: &str) -> Result<bool> {
+    let mut stmt = conn.prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?1",
+    )?;
+    let found: Option<String> = stmt.query_row([table], |row| row.get(0)).ok();
+    Ok(found.is_some())
 }
 
 #[cfg(test)]
@@ -501,6 +540,39 @@ mod tests {
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
         assert_eq!(version, LATEST_VERSION);
+    }
+
+    /// Regression: a real user database was found at user_version = 8 with no
+    /// `agents` table at all. The v8 → v9 ALTER then failed with
+    /// "no such table: agents", which aborted startup before any window or log
+    /// existed (initialize_store().expect in lib.rs). The migration must heal
+    /// the missing table instead of failing.
+    #[test]
+    fn test_v8_database_without_agents_table_upgrades() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+
+        conn.pragma_update(None, "user_version", 8).unwrap();
+        assert!(!has_table(&conn, "agents").unwrap());
+
+        run_migrations(&conn).unwrap();
+
+        assert!(has_table(&conn, "agents").unwrap());
+        assert!(has_column(&conn, "agents", "display_name").unwrap());
+        let version: u32 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, LATEST_VERSION);
+    }
+
+    #[test]
+    fn test_add_column_on_unknown_missing_table_errors_clearly() {
+        let conn = Connection::open_in_memory().unwrap();
+
+        let err = add_column_if_missing(&conn, "not_a_table", "col", "TEXT").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("not_a_table"), "unexpected error: {msg}");
+        assert!(!msg.contains("no such table"), "unexpected error: {msg}");
     }
 
     #[test]

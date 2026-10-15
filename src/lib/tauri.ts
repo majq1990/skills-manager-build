@@ -878,6 +878,8 @@ export interface EnterpriseSkill {
   visibility: string;
   tags: string[];
   download_count?: number;
+  /** 服务端 catalog 里的显示名（agent 的中文名；skill 为空串） */
+  display_name?: string;
 }
 
 export interface EnterpriseLoginResponse {
@@ -932,15 +934,43 @@ export interface EnterpriseAgentDocument {
 export const enterpriseAgentDocument = (name: string, version: string) =>
   invoke<EnterpriseAgentDocument>("enterprise_agent_document", { name, version });
 
+/** 上传前读 agent 包 frontmatter：版本号与中文显示名，供弹窗预填。 */
+export const enterpriseAgentPackageMeta = (centralPath: string) =>
+  invoke<{ display_name: string | null; version: string | null }>(
+    "enterprise_agent_package_meta",
+    { centralPath }
+  );
+
+/** 上传前推荐一批标签（受控词表内）+ 受控词表全集，供弹窗预填与候选下拉。 */
+export const enterpriseSuggestTags = (
+  centralPath: string,
+  name: string,
+  description: string,
+  category?: string
+) =>
+  invoke<{ suggested: string[]; vocabulary: string[] }>("enterprise_suggest_tags", {
+    centralPath,
+    name,
+    description,
+    category: category ?? null,
+  });
+
 export const enterpriseUploadAgent = (
   name: string,
   centralPath: string,
   version?: string,
-  visibility?: string
+  visibility?: string,
+  tags?: string[]
 ) =>
   invoke<{ success: boolean; version: string; message: string; status: string }>(
     "enterprise_upload_agent",
-    { name, centralPath, version: version ?? null, visibility: visibility ?? null }
+    {
+      name,
+      centralPath,
+      version: version ?? null,
+      visibility: visibility ?? null,
+      tags: tags && tags.length > 0 ? tags : null,
+    }
   );
 
 export const enterpriseInstallAgent = (name: string, version: string) =>
@@ -974,19 +1004,22 @@ export interface UploadResponse {
 
 /**
  * 把本地技能（central_path 目录内容）打包上传/发布到企业服务器。
- * version 留空 = 服务端自动递增；安全扫描不过会抛错（含服务端错误信息）。
+ * version 留空 = 服务端自动递增；tags 留空 = 沿用 SKILL.md frontmatter 里的标签；
+ * 安全扫描不过会抛错（含服务端错误信息）。
  */
 export const enterpriseUploadSkill = (
   name: string,
   centralPath: string,
   version?: string,
-  visibility?: string
+  visibility?: string,
+  tags?: string[]
 ) =>
   invoke<UploadResponse>("enterprise_upload_skill", {
     name,
     centralPath,
     version: version || null,
     visibility: visibility || null,
+    tags: tags && tags.length > 0 ? tags : null,
   });
 
 // ── Agents (distribution) ──

@@ -162,6 +162,9 @@ pub async fn enterprise_logout(
         crate::core::feedback_token::clear_token();
         // 落盘的登录态也要清掉，否则下次启动又自动登上了。
         crate::core::enterprise_session::clear(&store);
+        // 登出本身不留任何痕迹，排查"重启后要重新登录"类反馈时无法区分
+        // 用户登出与登录态丢失，这里补一条。
+        log::info!("企业登录态: 用户登出，已清理落盘凭据");
         Ok(())
     })
     .await?
@@ -342,15 +345,77 @@ pub async fn enterprise_agent_document(
     .await?
 }
 
+/// 上传前读 agent 包的 frontmatter 元信息（version / displayName），
+/// 供 AgentPublishDialog 预填版本号、展示将要发布的中文名。
+#[derive(Debug, serde::Serialize)]
+pub struct AgentPackageMeta {
+    pub display_name: Option<String>,
+    pub version: Option<String>,
+}
+
+#[tauri::command]
+pub async fn enterprise_agent_package_meta(
+    central_path: String,
+) -> Result<AgentPackageMeta, AppError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let parsed = crate::core::agent_variant::parse_agent_file(std::path::Path::new(&central_path));
+        Ok(AgentPackageMeta {
+            display_name: parsed.as_ref().and_then(|p| p.display_name.clone()),
+            version: parsed.as_ref().and_then(|p| p.version.clone()),
+        })
+    })
+    .await?
+}
+
+/// 上传前推荐一批标签（受控词表内），供发布弹窗预填。
+/// 来源：发布物 frontmatter 的 tags > 分类/目录名映射 > 名称与描述关键词。
+#[derive(Debug, serde::Serialize)]
+pub struct TagSuggestions {
+    /// 推荐的标签（已归一化、去重、限长，全部在受控词表内）
+    pub suggested: Vec<String>,
+    /// 受控词表全集，供候选下拉展示
+    pub vocabulary: Vec<String>,
+}
+
+#[tauri::command]
+pub async fn enterprise_suggest_tags(
+    central_path: String,
+    name: String,
+    description: String,
+    category: Option<String>,
+) -> Result<TagSuggestions, AppError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        use crate::core::tag_suggest::{self, TagSuggestionInput};
+        let frontmatter_tags = tag_suggest::read_frontmatter_tags(std::path::Path::new(&central_path));
+        let suggested = tag_suggest::suggest_tags(&TagSuggestionInput {
+            name: &name,
+            description: &description,
+            category: category.as_deref(),
+            frontmatter_tags: &frontmatter_tags,
+        });
+        Ok(TagSuggestions {
+            suggested,
+            vocabulary: tag_suggest::CONTROLLED_VOCABULARY
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+        })
+    })
+    .await?
+}
+
 /// 把本地 agent（central_path 目录内容）打包 zip 上传/发布到企业服务器。
 /// 服务端做安全扫描；失败会带出 HTTP 400 的错误信息。
-/// version 留空 = 服务端自动递增。
+/// version 留空 = 用 AGENT.md frontmatter 的 version；两者都没有才由服务端自动递增。
+/// displayName 从 AGENT.md frontmatter 透传，让同事在市场里看到中文名而不是身份名。
+/// tags 留空 = 沿用 AGENT.md frontmatter 里的标签。
 #[tauri::command]
 pub async fn enterprise_upload_agent(
     name: String,
     central_path: String,
     version: Option<String>,
     visibility: Option<String>,
+    tags: Option<Vec<String>>,
 ) -> Result<UploadResponse, AppError> {
     // 上传前先检查登录态（无 token 直接报错，避免白白打包）。
     {
@@ -361,15 +426,36 @@ pub async fn enterprise_upload_agent(
         }
     }
     tauri::async_runtime::spawn_blocking(move || {
-        let zip_bytes = crate::core::skill_packer::pack_dir(std::path::Path::new(&central_path))
+        let dir = std::path::Path::new(&central_path);
+        // frontmatter 里的 version / displayName 在上传前读出来：
+        // 版本留空时服务端只会自动递增到 1.0.x，包内声明的 1.1.0 会被丢掉；
+        // displayName 不透传的话同事在市场里只看到 product-manager-agent 这种身份名。
+        let parsed = crate::core::agent_variant::parse_agent_file(dir);
+        let frontmatter_version = parsed.as_ref().and_then(|p| p.version.clone());
+        let display_name = parsed.as_ref().and_then(|p| p.display_name.clone());
+        let effective_version = version
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(str::to_string)
+            .or(frontmatter_version);
+
+        let zip_bytes = crate::core::skill_packer::pack_dir(dir)
             .map_err(|e| AppError::internal(format!("Failed to package agent: {}", e)))?;
         let api_guard = get_or_create_api();
         let api = api_guard.as_ref().unwrap();
         if api.get_token().is_none() {
             return Err(AppError::internal("Not authenticated"));
         }
-        api.upload_agent(&name, zip_bytes, version.as_deref(), visibility.as_deref())
-            .map_err(|e| AppError::internal(format!("Upload failed: {}", e)))
+        api.upload_agent(
+            &name,
+            zip_bytes,
+            effective_version.as_deref(),
+            visibility.as_deref(),
+            tags.as_deref(),
+            display_name.as_deref(),
+        )
+        .map_err(|e| AppError::internal(format!("Upload failed: {}", e)))
     })
     .await?
 }
@@ -417,6 +503,7 @@ fn pack_and_upload(
     central_path: &str,
     version: Option<&str>,
     visibility: Option<&str>,
+    tags: Option<&[String]>,
 ) -> Result<UploadResponse, AppError> {
     let zip_bytes = skill_packer::pack_dir(std::path::Path::new(central_path))
         .map_err(|e| AppError::internal(format!("Failed to package skill: {}", e)))?;
@@ -426,19 +513,20 @@ fn pack_and_upload(
     if api.get_token().is_none() {
         return Err(AppError::internal("Not authenticated"));
     }
-    api.upload_skill(name, zip_bytes, version, visibility)
+    api.upload_skill(name, zip_bytes, version, visibility, tags)
         .map_err(|e| AppError::internal(format!("Upload failed: {}", e)))
 }
 
 /// 把本地技能（central_path 目录内容）打包上传/发布到企业服务器。
 /// 服务端做安全扫描：不过返回 HTTP 400，错误信息会一并带出。
-/// version 留空 = 服务端自动递增。
+/// version 留空 = 服务端自动递增；tags 留空 = 沿用 SKILL.md frontmatter 里的标签。
 #[tauri::command]
 pub async fn enterprise_upload_skill(
     name: String,
     central_path: String,
     version: Option<String>,
     visibility: Option<String>,
+    tags: Option<Vec<String>>,
 ) -> Result<UploadResponse, AppError> {
     // 上传前先检查登录态（无 token 直接报错，避免白白打包）。
     {
@@ -455,6 +543,7 @@ pub async fn enterprise_upload_skill(
             &central_path,
             version.as_deref(),
             visibility.as_deref(),
+            tags.as_deref(),
         )
     })
     .await?
