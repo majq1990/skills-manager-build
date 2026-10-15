@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.25.9] - 2026-10-15
+
+### Added
+- **Skill upload tags end to end**: the publish dialog accepts tags as chips (Enter to commit, controlled vocabulary dropdown, custom tags allowed) and pre-fills a suggestion from the skill's frontmatter, category and name/description keywords — editable before upload. Tags are stored server-side, written into the published artifact's frontmatter, and survive server restarts.
+- **Agent display name and version pass-through**: the agent publish dialog pre-fills the version and display name from AGENT.md, and the enterprise market now shows the server-side Chinese display name on cards and in search — agents uploaded with a `displayName` show as e.g. 「需求处理 Agent」 instead of the ASCII identity name for every colleague, not just the uploader.
+
+### Fixed
+- **Deployments never destroy content they cannot prove is ours** (ported upstream #363/#435): deploying into a path owned by a recorded deployment requires that record to match what is on disk; undeploy, tool path changes, skill deletion and preset toggles preserve a directory that replaced our link instead of recursively deleting it, and a symlink-to-copy mode switch no longer fails forever.
+- **Startup self-heals empty sync metadata** (ported upstream #421): when the metadata lists no skills while the central library is intact, it is rebuilt from the database at startup instead of aborting every launch — the same silent "app never opens" class as the migration bug below.
+- **Migration no longer dies silently on old databases**: the v8→v9 migration creates the `agents` table when missing instead of panicking before the window shows (the 10-12 "打不开、无进程" report).
+- **Login-state observability**: logout now logs, and a startup restore that finds a stored username without a token logs that distinction, so "keeps asking me to log in" reports can be told apart from never-logged-in.
+- **`skills-manager-cli` export refuses to overwrite** an existing destination directory.
+
 ## [1.25.8] - 2026-09-24
 
 ### Fixed
