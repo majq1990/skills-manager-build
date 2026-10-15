@@ -910,10 +910,13 @@ fn show_skill(store: &SkillStore, reference: &str) -> anyhow::Result<SkillDetail
 
 fn export_skill(store: &SkillStore, reference: &str, dest: &Path) -> anyhow::Result<String> {
     let skill = resolve_skill(store, reference)?;
+    // An export destination is user-chosen: never overwrite anything already
+    // sitting there (#363 — `--dest ~/Documents` used to be able to wipe it).
     sync_engine::sync_skill(
         Path::new(&skill.central_path),
         dest,
         sync_engine::SyncMode::Copy,
+        sync_engine::ReplacePolicy::NoClobber,
     )?;
     Ok(dest.to_string_lossy().to_string())
 }
