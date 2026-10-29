@@ -5,26 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.25.13] - 2026-10-29
+
+### Release Overview
+- Upstream sync batch: salvage-port six non-conflicting upstream fixes (1.4x line) into the 1.25.x line
+
+### User-facing
+- Local install now reports the installed skill back: the success toast opens that skill's detail page directly (#558)
+- Skills uploaded from a workspace survive a restart instead of vanishing at reindex (#586)
+- Git install errors no longer leak the internal temp checkout path; they name the missing skill and point at the source/subpath (#594)
+- New WorkBuddy AI (overseas edition) agent adapter: deploys to `~/.workbuddy-ai/skills` instead of failing silently (#587)
+- Skill search boxes (workspace, project, add-skills, command palette) now treat `-`, `_` and spaces alike, so a skill found on one page is found on all (#510)
+
+### Developer & Governance
+- New `set_active_preset_tool_toggles` + `write_scenario_skill_unlocked` metadata helpers (#549 groundwork; preset-toggle behavior changes ship in a later batch)
+- Reindex regression tests for preset memberships when the last membership file disappears (#553)
 ## [1.25.12] - 2026-10-29
 
 ### Release Overview
-- 
+- Upstream sync: port three general defect fixes
 
 ### User-facing
-- 
+- Market install failures now show the real error returned by skills.sh (#529)
 
 ### Developer & Governance
-- 
+- Installing into a central target that is the source directory itself short-circuits, protecting the source data (#596)
+- Git install URLs normalize: owner/repo vs `.git`/ssh forms are recognized as the same repo (#517)
 ## [1.25.11] - 2026-10-29
 
 ### Release Overview
-- 
+- Upstream sync: port two crash-safety fixes from the 1.4x line
 
 ### User-facing
-- 
+- Installing a skill that is already a symlink back into the central library no longer deletes the source data (#565)
 
 ### Developer & Governance
-- 
+- CLI `check` validates skills from their source directory for local/import skills, not just hub skills (#597)
 ## [1.25.10] - 2026-10-29
 
 ### Release Overview

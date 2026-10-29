@@ -28,6 +28,7 @@ import { DocumentDiffViewer } from "../components/DocumentDiffViewer";
 import * as api from "../lib/tauri";
 import type { ManagedSkill, ProjectSkill } from "../lib/tauri";
 import { getErrorMessage } from "../lib/error";
+import { normalizeSkillSearch, skillSearchMatches } from "../lib/skillSearch";
 import { getTagActiveColor, getTagColor, UNTAGGED_FILTER } from "../lib/skillTags";
 import { AddSkillsSheet } from "../components/AddSkillsSheet";
 import type { WorkspaceConfig } from "./workspaceConfigs";
@@ -349,16 +350,10 @@ export function WorkspaceView({ config }: { config: WorkspaceConfig }) {
   }, [localSkills]);
 
   const visibleLocalSkills = useMemo(() => {
-    const q = search.trim().toLowerCase();
+    const q = normalizeSkillSearch(search);
     return localSkills
       .filter((skill) => {
-        if (q) {
-          const matchesQuery =
-            skill.name.toLowerCase().includes(q) ||
-            skill.dir_name.toLowerCase().includes(q) ||
-            (skill.description || "").toLowerCase().includes(q);
-          if (!matchesQuery) return false;
-        }
+        if (!skillSearchMatches(q, [skill.name, skill.dir_name, skill.description])) return false;
         if (tagFilters.size > 0) {
           const wantUntagged = tagFilters.has(UNTAGGED_FILTER);
           const matchUntagged = wantUntagged && skill.tags.length === 0;

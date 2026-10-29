@@ -29,6 +29,7 @@ import { toast } from "sonner";
 import { cn } from "../utils";
 import { useApp } from "../context/AppContext";
 import { useMultiSelect } from "../hooks/useMultiSelect";
+import { normalizeSkillSearch, skillSearchMatches } from "../lib/skillSearch";
 import { ConfirmDialog } from "../components/ConfirmDialog";
 import { DeleteSkillButton } from "../components/DeleteSkillButton";
 import { PublishDialog } from "../components/PublishDialog";
@@ -231,10 +232,10 @@ export function MySkills() {
   const filtered = useMemo(() => {
     const result = skills.filter((skill) => {
       const displayName = skillDisplayNames.get(skill.id) || skill.name;
-      const matchesSearch =
-        skill.name.toLowerCase().includes(search.toLowerCase()) ||
-        displayName.toLowerCase().includes(search.toLowerCase()) ||
-        (skill.description || "").toLowerCase().includes(search.toLowerCase());
+      const matchesSearch = skillSearchMatches(
+        normalizeSkillSearch(search),
+        [skill.name, displayName, skill.description]
+      );
       if (!matchesSearch) return false;
 
       if (sourceFilters.size > 0 && !sourceFilters.has(skill.source_type)) return false;

@@ -44,6 +44,12 @@ pub struct BatchDeleteSkillsResult {
 }
 
 #[derive(Debug, Serialize)]
+pub struct InstallLocalResult {
+    pub skill_id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Serialize)]
 pub struct ManagedSkillDto {
     pub id: String,
     pub name: String,
@@ -735,9 +741,9 @@ pub async fn install_local(
     source_path: String,
     name: Option<String>,
     store: State<'_, Arc<SkillStore>>,
-) -> Result<(), AppError> {
+) -> Result<InstallLocalResult, AppError> {
     let store = store.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
+    let result = tauri::async_runtime::spawn_blocking(move || {
         let outcome = (|| -> Result<Vec<(String, String)>, AppError> {
             let path = PathBuf::from(&source_path);
             let active = store.get_active_scenario_id().ok().flatten();
@@ -758,9 +764,20 @@ pub async fn install_local(
             store_install_results_unlocked(&store, &results, &metadata, active.as_deref())
         })();
         log_install_many_outcome(&store, "local", outcome.as_ref());
-        outcome.map(|_| ())
+        let results = outcome?;
+        let (skill_id, skill_name) = results.into_iter().next().ok_or_else(|| {
+            AppError::io(anyhow::anyhow!(
+                "No installable skills found at {}",
+                source_path
+            ))
+        })?;
+        Ok(InstallLocalResult {
+            skill_id,
+            name: skill_name,
+        })
     })
-    .await?
+    .await?;
+    result
 }
 
 /// 安装企业技能：用全局登录态下载 zip → 校验 → 解压安装到中央库 → 入库 +

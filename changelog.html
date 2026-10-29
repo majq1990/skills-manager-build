@@ -50,7 +50,7 @@
 <body>
 <header>
   <h1>Skills Manager 更新历史</h1>
-  <p>企业 Skill 管理与分发桌面工具 — 版本更新记录（最新版本 v1.25.12，2026-10-29）</p>
+  <p>企业 Skill 管理与分发桌面工具 — 版本更新记录（最新版本 v1.25.13，2026-10-29）</p>
   <div class="links">
     <a href="./download.html">&larr; 返回下载页</a>
     <a href="https://github.com/majq1990/skills-manager-build/releases">GitHub Releases</a>
@@ -59,11 +59,30 @@
 <div class="container">
       <details class="entry" open>
         <summary>
-          <span class="ver">v1.25.12</span>
+          <span class="ver">v1.25.13</span>
           <span class="date">2026-10-29</span>
           <span class="current">当前版本</span>
         </summary>
-
+        <h4>修复</h4>
+        <ul>
+<li><strong>本地安装可直接定位到装好的技能</strong>（#558）：安装成功提示新增"查看"直达该技能详情页，不再只能按名字翻找。</li>
+<li><strong>工作区上传的技能重启后不丢</strong>（#586）：上传导入中央库后同步写元数据快照，启动 reindex 不再把未写快照的技能清掉。</li>
+<li><strong>Git 安装报错不再暴露内部临时路径</strong>（#594）：找不到技能时直接说明"该版本仓库里没有此技能，检查来源与子路径"。</li>
+<li><strong>新增 WorkBuddy AI（海外版）适配器</strong>（#587）：海外版数据目录在 <code>~/.workbuddy-ai</code>，部署到国内路径会静默失败；现在两个版本各自适配。</li>
+<li><strong>搜索分隔符统一</strong>（#510）：各技能搜索框把 <code>-</code>、<code>_</code>、空格视为等价，"wrap up" 能搜到 <code>wrap-up</code>，且各页面行为一致。</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.25.12</span>
+          <span class="date">2026-10-29</span>
+          
+        </summary>
+        <h4>修复</h4>
+        <ul>
+<li>市场安装失败时显示 skills.sh 返回的真实错误（#529）。</li>
+<li>安装目标即源目录自身时短路，避免误删源数据（#596）；Git 安装 URL 归一化，owner/repo 与 .git/ssh 形式互认（#517）。</li>
+        </ul>
       </details>
       <details class="entry">
         <summary>
@@ -71,7 +90,10 @@
           <span class="date">2026-10-29</span>
           
         </summary>
-
+        <h4>修复</h4>
+        <ul>
+<li>安装"链接回中心库同名技能"时不再误删源数据（#565）；CLI check 对 local/import 来源按源目录校验（#597）。</li>
+        </ul>
       </details>
       <details class="entry">
         <summary>

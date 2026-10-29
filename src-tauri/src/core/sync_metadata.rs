@@ -115,6 +115,33 @@ pub(crate) fn write_all_from_db_unlocked(store: &SkillStore) -> Result<()> {
     Ok(())
 }
 
+/// Write a single scenario-skill membership file. The caller holds the repo
+/// lock and has just changed that member's tool toggles in the db (#549).
+pub(crate) fn write_scenario_skill_unlocked(
+    store: &SkillStore,
+    scenario_id: &str,
+    skill_id: &str,
+) -> Result<()> {
+    let tools = store
+        .get_scenario_skill_tool_toggles(scenario_id, skill_id)?
+        .into_iter()
+        .map(|toggle| (toggle.tool, toggle.enabled))
+        .collect::<BTreeMap<_, _>>();
+    let sort_order = store
+        .get_skill_ids_for_scenario(scenario_id)?
+        .iter()
+        .position(|id| id == skill_id)
+        .unwrap_or(0) as i32;
+    let member = ScenarioSkillMetaFile {
+        schema_version: SCHEMA_VERSION,
+        scenario_id: scenario_id.to_string(),
+        skill_id: skill_id.to_string(),
+        sort_order,
+        tools,
+    };
+    write_membership_file(&member)
+}
+
 #[allow(dead_code)]
 pub fn reindex_from_metadata(store: &SkillStore) -> Result<()> {
     let _lock = RepoLock::acquire_waiting("reindex sync metadata", DEFAULT_WAIT)?;
@@ -267,10 +294,12 @@ fn ensure_metadata_dirs() -> Result<()> {
     Ok(())
 }
 
+// Scenario files are only ever written together with all of their
+// memberships (write_scenario_records_from_db), so scenarios/ alone marks a
+// complete snapshot. scenario-skills/ cannot be required: Git drops it once
+// the last membership in the library is removed (#553).
 fn metadata_has_complete_scenario_snapshot() -> bool {
-    metadata_dir().join("schema.json").is_file()
-        && metadata_dir().join("scenarios").is_dir()
-        && metadata_dir().join("scenario-skills").is_dir()
+    metadata_dir().join("schema.json").is_file() && metadata_dir().join("scenarios").is_dir()
 }
 
 fn write_skill_records_from_db(store: &SkillStore) -> Result<()> {
@@ -756,4 +785,63 @@ mod tests {
             vec!["tag-a".to_string(), "tag-b".to_string()]
         );
     }
+    fn insert_preset_with_member(store: &SkillStore, scenario_id: &str, skill_id: &str) {
+        store
+            .insert_scenario(&ScenarioRecord {
+                id: scenario_id.to_string(),
+                name: scenario_id.to_string(),
+                description: None,
+                icon: None,
+                sort_order: 0,
+                created_at: 1,
+                updated_at: 1,
+            })
+            .unwrap();
+        store.add_skill_to_scenario(scenario_id, skill_id).unwrap();
+    }
+
+    #[test]
+    fn reindex_clears_memberships_when_last_membership_file_is_gone() {
+        let repo = test_repo();
+        let skill_dir = write_skill_dir("member-skill");
+        repo.store
+            .insert_skill(&sample_skill("skill-1", &skill_dir))
+            .unwrap();
+        insert_preset_with_member(&repo.store, "preset-1", "skill-1");
+        write_all_from_db_unlocked(&repo.store).unwrap();
+
+        // Another device removed the last membership in the library. Git
+        // does not track empty directories, so the pulled tree has no
+        // scenario-skills/ at all while scenarios/ is still there (#553).
+        fs::remove_dir_all(metadata_dir().join("scenario-skills")).unwrap();
+
+        reindex_from_metadata_unlocked(&repo.store).unwrap();
+
+        let members = repo.store.get_skill_ids_for_scenario("preset-1").unwrap();
+        assert!(members.is_empty(), "stale membership survived: {members:?}");
+        assert_eq!(repo.store.get_all_scenarios().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn reindex_keeps_presets_when_snapshot_has_no_scenario_metadata() {
+        let repo = test_repo();
+        let skill_dir = write_skill_dir("member-skill");
+        repo.store
+            .insert_skill(&sample_skill("skill-1", &skill_dir))
+            .unwrap();
+        insert_preset_with_member(&repo.store, "preset-1", "skill-1");
+        // Writes schema.json and skills/ only: the snapshot says nothing
+        // about presets, so it must not wipe them.
+        ensure_skill_metadata_unlocked(&repo.store, "skill-1").unwrap();
+        assert!(!metadata_dir().join("scenarios").exists());
+
+        reindex_from_metadata_unlocked(&repo.store).unwrap();
+
+        assert_eq!(repo.store.get_all_scenarios().unwrap().len(), 1);
+        assert_eq!(
+            repo.store.get_skill_ids_for_scenario("preset-1").unwrap(),
+            vec!["skill-1".to_string()]
+        );
+    }
+
 }

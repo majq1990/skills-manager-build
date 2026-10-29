@@ -37,6 +37,7 @@ import { cn } from "../utils";
 import * as api from "../lib/tauri";
 import type { ProjectSkill, ManagedSkill, ProjectAgentTarget } from "../lib/tauri";
 import { getErrorMessage } from "../lib/error";
+import { normalizeSkillSearch, skillSearchMatches } from "../lib/skillSearch";
 import { AddSkillsSheet } from "../components/AddSkillsSheet";
 
 const PROJECT_DEFAULT_EXPORT_AGENTS_KEY = "project_default_export_agents";
@@ -297,10 +298,7 @@ export function ProjectDetail() {
 
   const filtered = useMemo(() => {
     return groupedSkills.filter((skill) => {
-      const matchesSearch =
-        skill.name.toLowerCase().includes(search.toLowerCase()) ||
-        (skill.description || "").toLowerCase().includes(search.toLowerCase());
-      if (!matchesSearch) return false;
+      if (!skillSearchMatches(normalizeSkillSearch(search), [skill.name, skill.description])) return false;
       if (tagFilters.size > 0) {
         const wantUntagged = tagFilters.has(UNTAGGED_FILTER);
         const matchUntagged = wantUntagged && skill.tags.length === 0;

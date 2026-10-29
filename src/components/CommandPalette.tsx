@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { useApp } from "../context/AppContext";
 import { getPresetIconOption } from "../lib/presetIcons";
+import { normalizeSkillSearch, skillSearchMatches } from "../lib/skillSearch";
 import { cn } from "../utils";
 
 type ItemKind = "skill" | "preset" | "project" | "action";
@@ -82,14 +83,10 @@ export function CommandPalette() {
 
   const items = useMemo<PaletteItem[]>(() => {
     const q = query.trim().toLowerCase();
+    const skillQuery = normalizeSkillSearch(query);
 
     const skillItems: PaletteItem[] = managedSkills
-      .filter(
-        (s) =>
-          !q ||
-          s.name.toLowerCase().includes(q) ||
-          (s.description || "").toLowerCase().includes(q),
-      )
+      .filter((s) => skillSearchMatches(skillQuery, [s.name, s.description]))
       .slice(0, 8)
       .map((s) => ({
         id: `skill:${s.id}`,

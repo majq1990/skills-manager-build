@@ -933,6 +933,17 @@ pub fn default_tool_adapters() -> Vec<ToolAdapter> {
             builtin_agent_names: &[],
         },
         ToolAdapter {
+            key: "workbuddy_overseas".into(),
+            display_name: "WorkBuddy AI".into(),
+            // The overseas edition keeps its data directory in `~/.workbuddy-ai/`
+            // and reads user skills from `skills/` beneath it. Deploying to the
+            // domestic path instead fails silently (#587).
+            relative_skills_dir: ".workbuddy-ai/skills".into(),
+            relative_detect_dir: ".workbuddy-ai".into(),
+            category: ToolCategory::Lobster,
+            ..Default::default()
+        },
+        ToolAdapter {
             key: "dsh".into(),
             display_name: "DSH".into(),
             // DSH reads user skills from ~/.dsh/skills (standard SKILL.md
@@ -1072,6 +1083,24 @@ mod tests {
             .expect("antigravity adapter should exist");
 
         assert_eq!(adapter.relative_skills_dir, ".gemini/antigravity/skills");
+    }
+
+    #[test]
+    fn workbuddy_editions_use_their_own_skill_paths() {
+        let adapters = default_tool_adapters();
+        let domestic = adapters
+            .iter()
+            .find(|adapter| adapter.key == "workbuddy")
+            .expect("workbuddy adapter should exist");
+        let overseas = adapters
+            .iter()
+            .find(|adapter| adapter.key == "workbuddy_overseas")
+            .expect("workbuddy_overseas adapter should exist");
+
+        assert_eq!(domestic.relative_skills_dir, ".workbuddy/skills");
+        assert_eq!(domestic.relative_detect_dir, ".workbuddy");
+        assert_eq!(overseas.relative_skills_dir, ".workbuddy-ai/skills");
+        assert_eq!(overseas.relative_detect_dir, ".workbuddy-ai");
     }
 
     #[test]

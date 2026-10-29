@@ -748,10 +748,11 @@ pub fn find_skill_dir(repo_dir: &Path, skill_id: Option<&str>) -> Result<PathBuf
         // of falling through to a container/root — otherwise the installer would
         // copy the entire `skills/` container (or an unrelated root skill) under
         // the requested name, duplicating every skill in the repo. See #278.
+        // `repo_dir` is a temp checkout, so its path stays out of the message (#594).
         bail!(
-            "Skill '{}' not found in {}",
-            id,
-            repo_dir.display()
+            "Skill '{}' was not found in the fetched version of this repository. \
+             Check the source and its subpath.",
+            id
         );
     }
 
@@ -1413,5 +1414,26 @@ mod tests {
         fs::write(dir.join("file.txt"), "data").unwrap();
         cleanup_temp(&dir);
         assert!(!dir.exists());
+    }
+
+    #[test]
+    fn missing_skill_error_names_the_skill_not_the_temp_checkout() {
+        // The checkout is a throwaway temp directory; its path tells the user
+        // nothing and reads like an internal failure (#594).
+        let tmp = tempdir().unwrap();
+        let skill = tmp.path().join("skills").join("kept");
+        fs::create_dir_all(&skill).unwrap();
+        fs::write(skill.join("SKILL.md"), "---
+name: kept
+---").unwrap();
+
+        let message = find_skill_dir(tmp.path(), Some("moved-away"))
+            .unwrap_err()
+            .to_string();
+        assert!(message.contains("'moved-away'"), "{message}");
+        assert!(
+            !message.contains(&tmp.path().display().to_string()),
+            "{message}"
+        );
     }
 }
