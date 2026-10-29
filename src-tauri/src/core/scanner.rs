@@ -36,9 +36,26 @@ const RECURSIVE_SCAN_SKIP_DIRS: &[&str] = &[".hub", ".git", "node_modules"];
 fn is_symlink_to_central(path: &Path) -> bool {
     if let Ok(target) = std::fs::read_link(path) {
         let central = super::central_repo::skills_dir();
-        return target.starts_with(&central);
+        // Windows junction/symlink targets often carry a `\\?\` prefix (and
+        // case may differ), which defeats a plain `starts_with`. Canonicalize
+        // both sides so prefix and casing cancel out.
+        let t = std::fs::canonicalize(&target).unwrap_or(target);
+        let c = std::fs::canonicalize(&central).unwrap_or(central);
+        return t.starts_with(&c);
     }
     false
+}
+
+/// True when `path` — after resolving symlinks/junctions — lands inside the
+/// central skills repo. Guards against re-discovering central content through
+/// links placed in tool dirs.
+fn resolves_into_central(path: &Path) -> bool {
+    let central = super::central_repo::skills_dir();
+    let central_real = std::fs::canonicalize(&central).unwrap_or(central);
+    match std::fs::canonicalize(path) {
+        Ok(real) => real.starts_with(&central_real),
+        Err(_) => false,
+    }
 }
 
 /// Recursively walk `dir` and return all subdirectories that contain SKILL.md.
@@ -93,6 +110,9 @@ fn push_discovered(
     managed_paths: &[String],
     discovered: &mut Vec<DiscoveredSkillRecord>,
 ) {
+    if resolves_into_central(&path) {
+        return;
+    }
     let path_str = path.to_string_lossy().to_string();
     if managed_paths.contains(&path_str) {
         return;
@@ -205,6 +225,16 @@ pub fn scan_local_skills_with_adapters(
             scan_flat_dir(&adapter.key, &scan_dir, managed_paths, &mut discovered);
         }
     }
+
+    // Cross-tool links (e.g. ~/.zcode/skills/X -> ~/.agents/skills/X) make the
+    // same physical skill discoverable once per tool. Keep one record per
+    // canonical target so a single import covers every tool pointing at it.
+    let mut seen: HashSet<PathBuf> = HashSet::new();
+    discovered.retain(|rec| {
+        let p = PathBuf::from(&rec.found_path);
+        let key = std::fs::canonicalize(&p).unwrap_or(p);
+        seen.insert(key)
+    });
 
     let skills_found = discovered.len();
     Ok(ScanPlan {
