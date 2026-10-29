@@ -50,7 +50,7 @@
 <body>
 <header>
   <h1>Skills Manager 更新历史</h1>
-  <p>企业 Skill 管理与分发桌面工具 — 版本更新记录（最新版本 v1.25.8，2026-09-24）</p>
+  <p>企业 Skill 管理与分发桌面工具 — 版本更新记录（最新版本 v1.25.10，2026-10-29）</p>
   <div class="links">
     <a href="./download.html">&larr; 返回下载页</a>
     <a href="https://github.com/majq1990/skills-manager-build/releases">GitHub Releases</a>
@@ -59,9 +59,37 @@
 <div class="container">
       <details class="entry" open>
         <summary>
+          <span class="ver">v1.25.10</span>
+          <span class="date">2026-10-29</span>
+          <span class="current">当前版本</span>
+        </summary>
+
+      </details>
+      <details class="entry">
+        <summary>
+          <span class="ver">v1.25.9</span>
+          <span class="date">2026-10-15</span>
+          
+        </summary>
+        <h4>新增</h4>
+        <ul>
+<li><strong>上传标签全链路打通</strong>：发布弹窗以标签 chips 输入（回车确认、受控词表下拉、允许少量自定义），并从技能 frontmatter、分类、名称与描述关键词自动预填一版标签，可删可改可留空。标签上传后写入服务端目录并注入发布产物 frontmatter，服务重启不再丢失。</li>
+<li><strong>Agent 显示名与版本透传</strong>：Agent 发布弹窗从 AGENT.md 预填版本号与显示名；企业能力库卡片与搜索改用服务端中文名——凡是带 <code>displayName</code> 的 agent，所有同事看到的都是「需求处理 Agent」这样的中文名，而不再是 ASCII 身份名（此前只有上传者本机能看到中文）。</li>
+        </ul>
+        <h4>修复</h4>
+        <ul>
+<li><strong>部署不再销毁无法证明属于自己的内容</strong>（移植上游 #363/#435）：按记录部署时校验磁盘现状与记录一致；取消部署、切换工具路径、删除技能、预设取消勾选时，若目标目录已被用户替换为自己的内容则保留不动、只清记录；symlink 切 copy 模式不再永远失败。</li>
+<li><strong>启动时自愈空的同步元数据</strong>（移植上游 #421）：元数据列不出技能而中央库完好时，改为从数据库重建并继续启动，不再每次启动中止——与下面的迁移缺陷同属&quot;静默打不开&quot;一类。</li>
+<li><strong>旧库升级迁移不再静默死亡</strong>：v8→v9 迁移执行前确认表存在（缺则自动补建），修复 10-12 反馈的&quot;打不开、无进程&quot;。</li>
+<li><strong>登录态可观测性</strong>：登出补日志；启动恢复时发现&quot;有落盘用户名但 token 缺失&quot;单独告警，便于区分&quot;用户登出&quot;与&quot;登录态丢失&quot;。</li>
+<li><strong>CLI export 拒绝覆盖</strong>已存在的目标目录。</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
           <span class="ver">v1.25.8</span>
           <span class="date">2026-09-24</span>
-          <span class="current">当前版本</span>
+          
         </summary>
         <h4>修复</h4>
         <ul>
