@@ -1284,7 +1284,12 @@ fn run_check(
     let mut reports = Vec::new();
 
     for skill in targets {
-        if !matches!(skill.source_type.as_str(), "git" | "skillssh") {
+        // Local and import skills are compared with their source folder, as the
+        // app does (#590). Website snapshots have nothing to compare against.
+        if !matches!(
+            skill.source_type.as_str(),
+            "git" | "skillssh" | "local" | "import"
+        ) {
             reports.push(CheckReport {
                 skill_id: skill.id.clone(),
                 name: skill.name.clone(),
@@ -1295,6 +1300,9 @@ fn run_check(
             });
             continue;
         }
+        // A local check only reads the disk, so the cache that spares remote
+        // round-trips must not answer for it.
+        let force = force || matches!(skill.source_type.as_str(), "local" | "import");
         let report =
             match cmd::check_skill_update_internal(store, &skill.id, force, proxy_url.as_deref()) {
                 Ok(dto) => CheckReport {
