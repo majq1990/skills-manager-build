@@ -1,9 +1,10 @@
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use super::{
+    central_repo,
     error::AppError,
     skill_store::{ScenarioRecord, SkillStore, SkillTargetRecord},
     sync_engine, sync_metadata, tool_adapters, tool_service,
@@ -146,6 +147,134 @@ fn skip_check_mode(
     }
 }
 
+/// Whether the deployment recorded at exactly this path is still current, so a
+/// resync can leave it alone: a link to the source, or a real directory copied
+/// from the library's current content hash (#153).
+///
+/// [`sync_engine::sync_skill`] rewrites a recorded copy wholesale. Only the
+/// startup and preset sync asked this first, so every other resync (a preset
+/// applied from the PresetBar, a batch deploy, the sync after an install, an
+/// update that changed no content) deleted whatever had been written into the
+/// agent's copy although the library had not changed. Skipping never deletes
+/// anything, so every resync can ask.
+///
+/// Only the calling tool's own row counts. Rows of other tools sharing the
+/// directory are history of their own deployments, and the removal paths rely
+/// on their disagreeing to keep a directory whose owner is unclear. A copy
+/// replaced by a file or a foreign link is not current, so `sync_skill` still
+/// gets to refuse whatever replaced it.
+pub(crate) fn recorded_target_is_current(
+    record: Option<&SkillTargetRecord>,
+    source: &Path,
+    target: &Path,
+    desired: sync_engine::SyncMode,
+    library_hash: Option<&str>,
+) -> bool {
+    let Some(record) = record.filter(|record| record.status == "ok") else {
+        return false;
+    };
+    let Some(check_mode) = skip_check_mode(&record.mode, desired) else {
+        return false;
+    };
+    // A link to the source serves the library's content too; anything else
+    // in place of the copy goes to `sync_skill`, which refuses it.
+    if matches!(check_mode, sync_engine::SyncMode::Copy)
+        && !matches!(
+            sync_engine::classify_target(target, Some(source)),
+            Ok(sync_engine::TargetState::RealDir | sync_engine::TargetState::LinkToSource)
+        )
+    {
+        return false;
+    }
+    sync_engine::is_target_current(
+        source,
+        target,
+        check_mode,
+        record.source_hash.as_deref(),
+        library_hash,
+    )
+}
+
+/// Clean up a deployment at a path its tool no longer reads: the adapter
+/// moved, or the tool's skills directory was changed. [`deployment_target`]
+/// keeps any recorded path inside the tool's root, so a recorded path that
+/// differs from the desired one lies outside it.
+///
+/// Links are removed as usual. A copy-mode directory may hold edits made
+/// there that exist nowhere else (#593), and a matching content hash is no
+/// proof it is unedited: the hash skips `.gitignore` and caches. It cannot
+/// stay where it is either. Another agent may read that directory too, and
+/// moving the tool back would find it in the way. So it is moved into the
+/// library's `kept-copies/<tool>/`. Callers drop the record either way.
+pub(crate) fn release_abandoned_target(path: &Path, recorded_mode: &str, tool: &str) {
+    if recorded_mode != "copy" {
+        sync_engine::remove_recorded_target_or_warn(path, recorded_mode);
+        return;
+    }
+    // Only what still looks like our copy is ours to move.
+    match sync_engine::matches_recorded_deployment(path, recorded_mode) {
+        Ok(true) => {}
+        Ok(false) => return,
+        Err(e) => {
+            log::warn!("Keeping {}: cannot inspect it ({e})", path.display());
+            return;
+        }
+    }
+    match move_into_kept_copies(path, tool) {
+        Ok(kept) => log::warn!(
+            "Moved {} to {}: {tool} no longer reads that path, and the copy may hold edits",
+            path.display(),
+            kept.display()
+        ),
+        Err(e) => log::warn!(
+            "Keeping {} in place: could not move it into the library ({e})",
+            path.display()
+        ),
+    }
+}
+
+/// A rename only, so nothing is copied half-way; across volumes it fails and
+/// the caller keeps the copy where it is.
+fn move_into_kept_copies(path: &Path, tool: &str) -> std::io::Result<PathBuf> {
+    let root = central_repo::base_dir()
+        .join("kept-copies")
+        .join(single_dir_name(tool));
+    std::fs::create_dir_all(&root)?;
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| "skill".to_string());
+    let mut kept = root.join(&name);
+    let mut n = 2;
+    // `symlink_metadata`, not `exists`: a dangling link still takes the name.
+    while std::fs::symlink_metadata(&kept).is_ok() {
+        kept = root.join(format!("{name}-{n}"));
+        n += 1;
+    }
+    std::fs::rename(path, &kept)?;
+    Ok(kept)
+}
+
+/// A tool key as one directory name. Custom keys reach here unchecked from
+/// the CLI, so a key like `../skills` must not lead outside `kept-copies/`.
+fn single_dir_name(key: &str) -> String {
+    let name: String = key
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    if name.is_empty() {
+        "tool".to_string()
+    } else {
+        name
+    }
+}
+
 /// Authorization for a deployment write: a `skill_targets` row claiming this
 /// exact path lets us replace what it recorded, otherwise we may only write
 /// where nothing of the user's would be destroyed (#363).
@@ -178,7 +307,7 @@ pub fn sync_desired_targets(
         if let Some(existing) = existing_targets.get(&key) {
             let target_path = PathBuf::from(&existing.target_path);
             if target_path != desired.target {
-                sync_engine::remove_recorded_target_or_warn(&target_path, &existing.mode);
+                release_abandoned_target(&target_path, &existing.mode, &desired.tool);
                 if let Err(e) = store.delete_target(&desired.skill_id, &desired.tool) {
                     log::warn!(
                         "Failed to delete stale target record for skill {}, tool {}: {e}",
@@ -186,34 +315,29 @@ pub fn sync_desired_targets(
                         desired.tool
                     );
                 }
-            } else if existing.status == "ok" {
-                if let Some(check_mode) = skip_check_mode(&existing.mode, desired.mode) {
-                    if sync_engine::is_target_current(
-                        &desired.source,
-                        &desired.target,
-                        check_mode,
-                        existing.source_hash.as_deref(),
-                        desired.source_hash.as_deref(),
-                    ) {
-                        // Surface the Windows fallback case in logs so operators
-                        // can tell when a target is permanently on Copy because
-                        // an earlier symlink_dir() failed (issue #153). Helpful
-                        // when a user later enables Developer Mode and wonders
-                        // why Symlink isn't being re-attempted.
-                        if existing.mode == "copy"
-                            && matches!(desired.mode, sync_engine::SyncMode::Symlink)
-                        {
-                            log::debug!(
-                                "sync_desired_targets: skill {} ({}) staying on copy fallback for {} (content unchanged); trigger a manual resync to retry symlink",
-                                desired.skill_id,
-                                desired.skill_name,
-                                desired.tool
-                            );
-                        }
-                        skipped_count += 1;
-                        continue;
-                    }
+            } else if recorded_target_is_current(
+                Some(existing),
+                &desired.source,
+                &desired.target,
+                desired.mode,
+                desired.source_hash.as_deref(),
+            ) {
+                // Surface the Windows fallback case in logs so operators
+                // can tell when a target is permanently on Copy because
+                // an earlier symlink_dir() failed (issue #153). Helpful
+                // when a user later enables Developer Mode and wonders
+                // why Symlink isn't being re-attempted.
+                if existing.mode == "copy" && matches!(desired.mode, sync_engine::SyncMode::Symlink)
+                {
+                    log::debug!(
+                        "sync_desired_targets: skill {} ({}) staying on copy fallback for {} (content unchanged); undeploy and deploy the skill again to retry symlink",
+                        desired.skill_id,
+                        desired.skill_name,
+                        desired.tool
+                    );
                 }
+                skipped_count += 1;
+                continue;
             }
         }
 
@@ -317,12 +441,15 @@ pub fn unsync_obsolete_scenario_targets(
         for target in &targets {
             let path = PathBuf::from(&target.target_path);
             let key = (skill_id.clone(), target.tool.clone());
-            if desired_paths.get(&key) == Some(&path) {
-                continue;
-            }
-
-            if let Err(e) = sync_engine::remove_target(&path) {
-                log::warn!("Failed to remove sync target {}: {e}", path.display());
+            match desired_paths.get(&key) {
+                Some(desired) if desired == &path => continue,
+                // Still deployed to this tool under the new preset, only
+                // somewhere else: the old path is abandoned, not removed by
+                // the user.
+                Some(_) => release_abandoned_target(&path, &target.mode, &target.tool),
+                None => {
+                    sync_engine::remove_recorded_target_or_warn(&path, &target.mode);
+                }
             }
             if let Err(e) = store.delete_target(skill_id, &target.tool) {
                 log::warn!(
@@ -401,7 +528,22 @@ pub fn sync_skill_to_active_scenario(
                 if let Some(old) = old_targets.iter().find(|t| t.tool == adapter.key) {
                     let old_path = PathBuf::from(&old.target_path);
                     if old_path != adapter.skills_dir().join(&target_name) {
-                        sync_engine::remove_recorded_target_or_warn(&old_path, &old.mode);
+                        // As in `sync_desired_targets`: a path another tool
+                        // still deploys to is its live deployment.
+                        let claimed_by_another_tool = old_targets.iter().any(|other| {
+                            other.tool != adapter.key
+                                && PathBuf::from(&other.target_path) == old_path
+                        });
+                        if claimed_by_another_tool {
+                            log::info!(
+                                "Keeping {}: still the deployment target of another tool; \
+                                 dropping {}'s stale record only",
+                                old_path.display(),
+                                adapter.key
+                            );
+                        } else {
+                            release_abandoned_target(&old_path, &old.mode, &adapter.key);
+                        }
                         let _ = store.delete_target(skill_id, &adapter.key);
                     }
                 }
@@ -409,10 +551,19 @@ pub fn sync_skill_to_active_scenario(
                 let target = adapter.skills_dir().join(&target_name);
                 let mode =
                     sync_engine::sync_mode_for_tool(&adapter.key, configured_mode.as_deref());
-                let recorded_mode = old_targets
-                    .iter()
-                    .find(|t| t.tool == adapter.key && PathBuf::from(&t.target_path) == target)
-                    .map(|t| t.mode.clone());
+                let same_path_record = old_targets.iter().find(|old| {
+                    old.tool == adapter.key && PathBuf::from(&old.target_path) == target
+                });
+                if recorded_target_is_current(
+                    same_path_record,
+                    &source,
+                    &target,
+                    mode,
+                    skill.content_hash.as_deref(),
+                ) {
+                    continue;
+                }
+                let recorded_mode = same_path_record.map(|t| t.mode.clone());
                 match sync_engine::sync_skill(&source, &target, mode, replace_policy(recorded_mode.as_deref())) {
                     Ok(actual_mode) => {
                         let now = chrono::Utc::now().timestamp_millis();
@@ -606,6 +757,24 @@ pub fn sync_single_skill_to_tool(
             .find(|t| t.tool == tool && PathBuf::from(&t.target_path) == target)
             .map(|t| t.mode)
     };
+    if !adopt {
+        // A managed deploy whose recorded copy is still current leaves the
+        // agent's directory alone instead of rewriting it wholesale (#598).
+        let same_path_record = store
+            .get_targets_for_skill(skill_id)
+            .map_err(AppError::db)?
+            .into_iter()
+            .find(|t| t.tool == tool && PathBuf::from(&t.target_path) == target);
+        if recorded_target_is_current(
+            same_path_record.as_ref(),
+            &source,
+            &target,
+            mode,
+            skill.content_hash.as_deref(),
+        ) {
+            return Ok(());
+        }
+    }
     let policy = if adopt {
         sync_engine::ReplacePolicy::UserConfirmed
     } else {
@@ -703,6 +872,8 @@ pub fn apply_skills_to_tools(
         return Ok(());
     }
 
+    let add = matches!(mode, BatchApplyMode::Add);
+    set_active_preset_tool_toggles(store, skill_ids, tool_keys, add)?;
     match mode {
         BatchApplyMode::Add => apply_add(store, skill_ids, tool_keys),
         BatchApplyMode::Remove => apply_remove(store, skill_ids, tool_keys),
@@ -739,6 +910,7 @@ fn apply_add(
 
     let mut synced = 0usize;
     let mut failed = 0usize;
+    let mut left = 0usize;
     for skill_id in skill_ids {
         let Ok(Some(skill)) = store.get_skill_by_id(skill_id) else {
             log::warn!("apply_skills_to_tools: skill {skill_id} not found");
@@ -750,10 +922,22 @@ fn apply_add(
         for (tool_key, adapter) in &adapters {
             let target = adapter.skills_dir().join(&target_name);
             let mode = sync_engine::sync_mode_for_tool(tool_key, configured_mode.as_deref());
-            let recorded_mode = skill_targets
+            let own_record = skill_targets
                 .iter()
-                .find(|t| &t.tool == tool_key && PathBuf::from(&t.target_path) == target)
-                .map(|t| t.mode.clone());
+                .find(|t| &t.tool == tool_key && PathBuf::from(&t.target_path) == target);
+            // What is already recorded as current at this path is left alone
+            // rather than rewritten when the library content did not change (#598).
+            if recorded_target_is_current(
+                own_record,
+                &source,
+                &target,
+                mode,
+                skill.content_hash.as_deref(),
+            ) {
+                left += 1;
+                continue;
+            }
+            let recorded_mode = own_record.map(|t| t.mode.clone());
             match sync_engine::sync_skill(&source, &target, mode, replace_policy(recorded_mode.as_deref())) {
                 Ok(actual_mode) => {
                     let now = chrono::Utc::now().timestamp_millis();
@@ -790,7 +974,7 @@ fn apply_add(
     }
 
     log::info!(
-        "apply_skills_to_tools(Add): skills={} tools={} synced={synced} failed={failed}",
+        "apply_skills_to_tools(Add): skills={} tools={} synced={synced} left={left} failed={failed}",
         skill_ids.len(),
         adapters.len(),
     );
@@ -872,7 +1056,6 @@ fn apply_remove(
 #[cfg(test)]
 mod sync_desired_targets_tests {
     use super::*;
-    use crate::core::central_repo;
     use crate::core::skill_store::{SkillRecord, SkillStore, SkillTargetRecord};
     use std::fs;
     use tempfile::tempdir;

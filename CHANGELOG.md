@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.25.14] - 2026-11-01
+
+### Release Overview
+- Upstream sync: complete the 1.4x sync/preset engine fix series (batch B) into the 1.25.x line
+
+### User-facing
+- Deploying a skill no longer rewrites the agent's copy when the library content is unchanged; user edits made inside a deployed copy now survive resyncs (#598)
+- When a tool's skills directory moves (settings path change, adapter default moved, preset redeploys elsewhere), abandoned copy-mode deployments are preserved instead of deleted: they are moved into the library's `kept-copies/<tool>/` for retrieval (#593/#595)
+- Preset batch deploy/undeploy now maintains the active preset's per-agent toggles: undeploying keeps a skill off at the next launch, redeploying brings it back on (#549 behavior completes the 1.25.13 groundwork)
+- Git skill update checks no longer flag monorepo siblings: when the repo head moved but this skill's subdirectory did not, the new head is recorded as the source and the skill reports up-to-date (#561 minimal path + subtree infrastructure)
+
+### Developer & Governance
+- New `recorded_target_is_current` / `release_abandoned_target` / `kept-copies` primitives in scenario_service; `unchanged_subtrees` + `run_git_watched_at` infrastructure in git_fetcher; `update_skill_source_revision` in skill_store
+- Skipped this round (documented): cli_bridge module (security-tool blocked + optional feature), well_known skills.sh website install and file_manager modules (1.4x feature additions, separate feature batches recommended)
 ## [1.25.13] - 2026-10-29
 
 ### Release Overview

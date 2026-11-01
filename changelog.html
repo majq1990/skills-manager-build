@@ -50,7 +50,7 @@
 <body>
 <header>
   <h1>Skills Manager 更新历史</h1>
-  <p>企业 Skill 管理与分发桌面工具 — 版本更新记录（最新版本 v1.25.13，2026-10-29）</p>
+  <p>企业 Skill 管理与分发桌面工具 — 版本更新记录（最新版本 v1.25.14，2026-11-01）</p>
   <div class="links">
     <a href="./download.html">&larr; 返回下载页</a>
     <a href="https://github.com/majq1990/skills-manager-build/releases">GitHub Releases</a>
@@ -59,9 +59,23 @@
 <div class="container">
       <details class="entry" open>
         <summary>
+          <span class="ver">v1.25.14</span>
+          <span class="date">2026-11-01</span>
+          <span class="current">当前版本</span>
+        </summary>
+        <h4>修复</h4>
+        <ul>
+<li><strong>库未变时不再重写 agent 侧副本</strong>（#598）：重新同步前比对记录的内容哈希，中央库内容没变就跳过重写——用户在 agent 目录副本里做的本地修改不再被一次重新同步冲掉。</li>
+<li><strong>工具目录迁移后副本保留</strong>（#593/#595）：工具 skills 目录搬家后，被抛弃的 copy 模式部署不再直接删除，而是移入中央库 <code>kept-copies/&lt;工具&gt;/</code> 保留（副本可能含用户修改，删除会丢数据）；共享目录仍按原规则处理。</li>
+<li><strong>预设批量部署/取消维护逐 agent 开关</strong>（#549）：取消部署的技能下次启动不再被启动同步拉回来；重新部署则把开关拨回，预览与启动修复恢复包含该技能。</li>
+<li><strong>monorepo 兄弟目录不再误报更新</strong>（#561）：仓库 head 前进但本技能子目录树未变时，把新 head 记为该技能来源并显示"已是最新"，托盘不再被兄弟目录的提交刷屏。</li>
+        </ul>
+      </details>
+      <details class="entry">
+        <summary>
           <span class="ver">v1.25.13</span>
           <span class="date">2026-10-29</span>
-          <span class="current">当前版本</span>
+          
         </summary>
         <h4>修复</h4>
         <ul>

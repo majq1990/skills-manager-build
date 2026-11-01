@@ -4,6 +4,7 @@ use anyhow::{bail, Context, Result};
 use fs2::FileExt;
 use git2::{Direction, Repository};
 use sha2::{Digest, Sha256};
+use std::collections::HashSet;
 use std::fs::{File, OpenOptions};
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -628,6 +629,71 @@ pub fn resolve_remote_revision(
     anyhow::bail!("Unable to resolve remote revision for {}", url)
 }
 
+/// Which `(revision, subpath)` pairs hold exactly the same directory at `head`.
+///
+/// A skill installed from a subdirectory of a monorepo would otherwise be
+/// "out of date" after every commit anywhere in that repository (#561). Equal
+/// tree ids mean identical content, so an update would change nothing.
+///
+/// One blobless, depth-1 fetch of `head` and every old revision serves all the
+/// pairs — trees and commits only, measured at ~400 KB for heygen-com/hyperframes.
+/// It goes into a throwaway bare repository, never a cache slot, and the trees
+/// are read with libgit2, which cannot lazily fetch a missing object the way
+/// git would in the partial repository that fetch leaves behind.
+///
+/// Any failure — no filter support, an old revision the server no longer has,
+/// a missing path — just leaves that pair out, so the caller falls back to
+/// reporting an update. This can only ever suppress a false update.
+pub fn unchanged_subtrees(
+    url: &str,
+    head: &str,
+    installed: &HashSet<(String, String)>,
+    proxy_url: Option<&str>,
+) -> HashSet<(String, String)> {
+    // Revisions reach the command line, so only full object ids get there.
+    let is_object_id = |rev: &str| rev.len() == 40 && rev.bytes().all(|b| b.is_ascii_hexdigit());
+    let pairs: Vec<&(String, String)> = installed
+        .iter()
+        .filter(|(rev, subpath)| rev != head && is_object_id(rev) && !subpath.is_empty())
+        .collect();
+    if pairs.is_empty() || !is_object_id(head) {
+        return HashSet::new();
+    }
+
+    let temp =
+        std::env::temp_dir().join(format!("skills-manager-subtree-{}", uuid::Uuid::new_v4()));
+    let result = (|| -> Result<HashSet<(String, String)>> {
+        Repository::init_bare(&temp)?;
+        let mut revs: Vec<&str> = pairs.iter().map(|(rev, _)| rev.as_str()).collect();
+        revs.push(head);
+        revs.sort_unstable();
+        revs.dedup();
+        let mut args = vec!["fetch", "--no-tags", "--depth=1", "--filter=blob:none", url];
+        args.extend(revs);
+        run_git_watched_at(&temp, &args, proxy_url, None, &None)?;
+
+        let repo = Repository::open_bare(&temp)?;
+        let tree_at = |rev: &str, subpath: &str| -> Option<git2::Oid> {
+            let commit = repo.find_commit(git2::Oid::from_str(rev).ok()?).ok()?;
+            let entry = commit.tree().ok()?.get_path(Path::new(subpath)).ok()?;
+            (entry.kind() == Some(git2::ObjectType::Tree)).then(|| entry.id())
+        };
+        Ok(pairs
+            .into_iter()
+            .filter(|(rev, subpath)| {
+                let now = tree_at(head, subpath);
+                now.is_some() && now == tree_at(rev, subpath)
+            })
+            .cloned()
+            .collect())
+    })();
+    let _ = std::fs::remove_dir_all(&temp);
+    result.unwrap_or_else(|err| {
+        log::info!("subtree comparison for {url} unavailable, reporting updates as before: {err}");
+        HashSet::new()
+    })
+}
+
 pub fn checkout_revision(repo_dir: &Path, revision: &str) -> Result<()> {
     let status = git_command()
         .arg("-C")
@@ -968,6 +1034,83 @@ fn resolve_remote_revision_with_git(
     let stdout = String::from_utf8_lossy(&output.stdout);
     select_remote_revision(&stdout, &candidates)
         .ok_or_else(|| anyhow::anyhow!("No remote revision found"))
+}
+
+/// `git -C <dir>` with per-invocation proxy and the shared cancel/progress
+/// policy. `fetch`, `repack` and `checkout` block on the network exactly like
+/// a clone, so they run under the same watch loop a clone does.
+fn run_git_watched_at(
+    dir: &Path,
+    args: &[&str],
+    proxy_url: Option<&str>,
+    cancel: Option<&Arc<AtomicBool>>,
+    on_progress: &Option<ProgressCallback>,
+) -> Result<()> {
+    let mut command = git_command();
+    command.arg("-C").arg(dir);
+    if let Some(proxy) = proxy_url.filter(|s| !s.is_empty()) {
+        command.arg("-c").arg(format!("http.proxy={proxy}"));
+        command.arg("-c").arg(format!("https.proxy={proxy}"));
+    }
+    command.args(args);
+    run_git_watched(command, cancel, on_progress)
+}
+
+/// Run a git subprocess under the shared cancel/timeout policy, forwarding its
+/// stderr to `on_progress`.
+fn run_git_watched(
+    mut command: Command,
+    cancel: Option<&Arc<AtomicBool>>,
+    on_progress: &Option<ProgressCallback>,
+) -> Result<()> {
+    let mut child = command
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("Failed to start git")?;
+
+    let (stderr_rx, stderr_thread) =
+        spawn_stderr_collector(child.stderr.take(), on_progress.is_some());
+    let deadline = Instant::now() + Duration::from_secs(CLONE_TIMEOUT_SECS);
+
+    loop {
+        if cancel.is_some_and(|c| c.load(Ordering::SeqCst)) {
+            let _ = child.kill();
+            let _ = child.wait();
+            bail!("Installation cancelled");
+        }
+
+        if let Some(ref cb) = on_progress {
+            while let Ok(line) = stderr_rx.try_recv() {
+                if !is_ssh_warning(&line) && !line.trim().is_empty() {
+                    cb(&line);
+                }
+            }
+        }
+
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let collected = stderr_thread.join().unwrap_or_default();
+                if status.success() {
+                    return Ok(());
+                }
+                bail!("git exited with {}: {}", status, collected.trim());
+            }
+            Ok(None) => {
+                if Instant::now() > deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    bail!("git timed out after {}s", CLONE_TIMEOUT_SECS);
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                bail!("Failed to wait for git: {e}");
+            }
+        }
+    }
 }
 
 #[cfg(test)]

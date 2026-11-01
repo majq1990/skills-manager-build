@@ -5,6 +5,20 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.25.14] - 2026-11-01
+
+### 发布概览
+- 上游同步：把 1.4x 线的 sync/preset 引擎修复系列（批次 B）完整移植进 1.25.x
+
+### 用户可见更新
+- 部署技能时，若中央库内容未变，不再重写 agent 侧的副本；用户在该副本里做的修改能扛过重新同步（#598）
+- 工具的 skills 目录发生迁移（设置改路径、适配器默认路径更新、预设重新部署到别处）时，被抛弃的 copy 模式部署不再被删除，而是移入中央库的 `kept-copies/<工具>/` 保留，可再取回（#593/#595）
+- 预设批量部署/取消部署现在维护当前预设的逐 agent 开关：取消部署后下次启动不会把技能又拉回来，重新部署后开关恢复（#549，补全 1.25.13 的基建）
+- Git 技能更新检查不再把 monorepo 的兄弟目录误报成有更新：仓库 head 前进但本技能子目录未变时，把新 head 记为来源并显示最新（#561 最小路径 + 子树比对基建）
+
+### 开发者与治理更新
+- 新增 scenario_service 的 `recorded_target_is_current` / `release_abandoned_target` / kept-copies 原语；git_fetcher 的 `unchanged_subtrees` + `run_git_watched_at` 基建；skill_store 的 `update_skill_source_revision`
+- 本轮跳过（已在文档留痕）：cli_bridge 模块（安全工具拦截 + 可选特性）、well_known skills.sh 网站安装与 file_manager 模块（均为 1.4x 功能新增，建议另立功能批次）
 ## [1.25.13] - 2026-10-29
 
 ### 发布概览

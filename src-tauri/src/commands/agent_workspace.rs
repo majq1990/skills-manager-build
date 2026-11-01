@@ -281,6 +281,7 @@ fn import_agent_local_skill_to_center(
         // sync_engine owns the on-disk artifact, so later unsync/scenario-sync
         // touch only that managed artifact, never the user's source.
         scenario_service::sync_single_skill_to_tool(store, &existing.id, agent, true)?;
+        sync_metadata::write_all_from_db_unlocked(store).map_err(AppError::io)?;
         return Ok(());
     }
 

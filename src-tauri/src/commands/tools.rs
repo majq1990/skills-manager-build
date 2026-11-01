@@ -1,5 +1,5 @@
 use serde::Serialize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Instant;
@@ -38,22 +38,37 @@ fn sync_active_scenario_to_tool(store: &SkillStore, tool_key: &str) {
 
 /// Remove all synced skill files and target records for a given tool.
 fn unsync_all_for_tool(store: &SkillStore, tool_key: &str) {
+    release_tool_targets(store, tool_key, None);
+}
+
+/// Drop every target record of `tool_key`. With `new_dir`, the tool has just
+/// moved there: deployments outside it sit at a path the tool no longer reads
+/// and are released (copies moved into the library) rather than removed.
+/// Without it, the user is taking the skills away from the tool, so they are
+/// removed.
+fn release_tool_targets(store: &SkillStore, tool_key: &str, new_dir: Option<&Path>) {
     let targets = store.get_all_targets().unwrap_or_default();
     for target in targets.iter().filter(|t| t.tool == tool_key) {
         // The row is dropped either way; only the on-disk removal is
         // conditional, so a directory the user put in place of our link
         // survives (see `remove_recorded_target_or_warn`).
-        sync_engine::remove_recorded_target_or_warn(
-            &PathBuf::from(&target.target_path),
-            &target.mode,
-        );
+        let path = PathBuf::from(&target.target_path);
+        match new_dir {
+            Some(dir) if path.parent() != Some(dir) => {
+                scenario_service::release_abandoned_target(&path, &target.mode, tool_key);
+            }
+            _ => {
+                sync_engine::remove_recorded_target_or_warn(&path, &target.mode);
+            }
+        }
         store.delete_target(&target.skill_id, tool_key).ok();
     }
 }
 
 fn reconcile_tool_sync_after_path_change(store: &SkillStore, tool_key: &str) {
-    // Remove existing synced artifacts/records (old path), then re-sync to current adapter path.
-    unsync_all_for_tool(store, tool_key);
+    // Release the deployments at the old path, then re-sync to the current one.
+    let new_dir = tool_adapters::find_adapter_with_store(store, tool_key).map(|a| a.skills_dir());
+    release_tool_targets(store, tool_key, new_dir.as_deref());
     let disabled = get_disabled_tools(store);
     if !disabled.contains(&tool_key.to_string()) {
         sync_active_scenario_to_tool(store, tool_key);

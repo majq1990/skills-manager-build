@@ -15,7 +15,7 @@ use crate::core::{
     installer,
     path_guard,
     repo_lock::{RepoLock, DEFAULT_WAIT},
-    scanner,
+    scanner, scenario_service,
     skill_metadata::{self, is_valid_skill_dir},
     skill_store::{SkillRecord, SkillStore, SkillTargetRecord},
     sync_engine, sync_metadata,
@@ -1976,6 +1976,30 @@ pub fn check_skill_update_internal(
                 Ok(remote_revision) => {
                     let update_status = match skill.source_revision.as_deref() {
                         Some(current) if current == remote_revision => "up_to_date",
+                        // The repo moved but this skill's directory did not
+                        // (#561). Record the new head as its source, as an
+                        // update that changed nothing would, so the next
+                        // check compares from there without fetching again.
+                        Some(current) if current != remote_revision => {
+                            if installed_subtree(&skill, &git_source).is_some_and(|installed| {
+                                let set: std::collections::HashSet<_> =
+                                    std::iter::once(installed.clone()).collect();
+                                git_fetcher::unchanged_subtrees(
+                                    &git_source.clone_url,
+                                    &remote_revision,
+                                    &set,
+                                    proxy_url,
+                                )
+                                .contains(&installed)
+                            }) {
+                                store
+                                    .update_skill_source_revision(&skill.id, &remote_revision)
+                                    .map_err(AppError::db)?;
+                                "up_to_date"
+                            } else {
+                                "update_available"
+                            }
+                        }
                         Some(_) => "update_available",
                         None => "unknown",
                     };
@@ -2065,6 +2089,13 @@ fn should_skip_update_check(
             .last_checked_at
             .map(|checked| chrono::Utc::now().timestamp_millis() - checked < ttl_ms)
             .unwrap_or(false))
+}
+
+/// The `(revision, subpath)` pair a subdirectory skill was installed from,
+/// or `None` for skills not installed from a subdirectory (#561).
+fn installed_subtree(skill: &SkillRecord, source: &GitSkillSource) -> Option<(String, String)> {
+    let subpath = source.subpath.as_deref().filter(|s| !s.is_empty())?;
+    Some((skill.source_revision.clone()?, subpath.to_string()))
 }
 
 pub fn git_source_from_skill(skill: &SkillRecord) -> Result<GitSkillSource, AppError> {
@@ -2311,6 +2342,16 @@ pub fn resync_copy_targets(store: &SkillStore, skill_id: &str) -> Result<(), App
 
     for target in targets {
         if target.mode != "copy" {
+            continue;
+        }
+        // An update that changed no content leaves the copies alone (#598).
+        if scenario_service::recorded_target_is_current(
+            Some(&target),
+            &source,
+            Path::new(&target.target_path),
+            sync_engine::SyncMode::Copy,
+            skill.content_hash.as_deref(),
+        ) {
             continue;
         }
 
